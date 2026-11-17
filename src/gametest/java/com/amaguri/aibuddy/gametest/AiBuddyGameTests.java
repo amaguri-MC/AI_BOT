@@ -330,21 +330,21 @@ public class AiBuddyGameTests {
 		return false;
 	}
 
-	/** `/tp Luzaku x y z` のように素の名前・@e[name=] で FakeMember を指定できる（Mixin と customName）。 */
+	/** `/tp TestBot x y z` のように素の名前・@e[name=] で FakeMember を指定できる（Mixin と customName）。 */
 	@GameTest(maxTicks = 100)
 	public void vanillaCommandsCanTargetFakeMemberByName(GameTestHelper h) {
 		buildArena(h);
 		FakeMember m = summon(h, 4.5f, 4.5f, false);
-		m.setDisplayNameText("Luzaku");
+		m.setDisplayNameText("TestBot");
 		Vec3 dest = h.absoluteVec(new Vec3(20.5, STAND, 4.5));
 		var server = h.getLevel().getServer();
 		var source = server.createCommandSourceStack().withSuppressedOutput();
 		server.getCommands().performPrefixedCommand(source, String.format(java.util.Locale.ROOT,
-				"tp Luzaku %.1f %.1f %.1f", dest.x, dest.y, dest.z));
+				"tp TestBot %.1f %.1f %.1f", dest.x, dest.y, dest.z));
 		h.runAfterDelay(5, () -> {
 			h.assertTrue(m.position().distanceTo(dest) < 1.5, "素の名前の /tp で移動したこと: " + m.position());
-			server.getCommands().performPrefixedCommand(source, "tag @e[name=Luzaku] add aibuddy_test");
-			h.assertTrue(m.entityTags().contains("aibuddy_test"), "@e[name=Luzaku] で選べること");
+			server.getCommands().performPrefixedCommand(source, "tag @e[name=TestBot] add aibuddy_test");
+			h.assertTrue(m.entityTags().contains("aibuddy_test"), "@e[name=TestBot] で選べること");
 			h.succeed();
 		});
 	}

@@ -19,7 +19,7 @@ import com.amaguri.aibuddy.entity.FakeMember;
 import com.amaguri.aibuddy.entity.ModEntities;
 
 /**
- * `/tp Luzaku @s` のような素のプレイヤー名指定で、同名の本物プレイヤーがいなければ FakeMember を返す。
+ * `/tp TestBot @s` のような素のプレイヤー名指定で、同名の本物プレイヤーがいなければ FakeMember を返す。
  * findSingleEntity も内部で findEntities を使う（UNVERIFIED: 本体は apidump に無いのでバイトコード未確認）。
  */
 @Mixin(EntitySelector.class)
