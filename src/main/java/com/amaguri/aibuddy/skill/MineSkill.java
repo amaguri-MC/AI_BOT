@@ -424,6 +424,12 @@ final class MineSkill extends Skill {
 				if (hit.getType() == HitResult.Type.BLOCK && digger.begin(hit.getBlockPos())) {
 					return;
 				}
+				// 目の高さからは見えても足元の壁で近づけない（頭の高さの穴に落ちた物）: 足の高さの壁を掘って近づく
+				Vec3 feet = o.position().add(0, 0.3, 0);
+				BlockHitResult low = SkillUtil.level(o).clip(new ClipContext(feet, it.position().add(0, 0.1, 0), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, o));
+				if (low.getType() == HitResult.Type.BLOCK && digger.begin(low.getBlockPos())) {
+					return;
+				}
 				lootDig = false;
 			}
 			nav.setVertTol(3.0);

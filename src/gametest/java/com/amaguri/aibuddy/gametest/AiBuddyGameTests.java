@@ -38,6 +38,8 @@ public class AiBuddyGameTests {
 	private static final int WAKE_FLOOR = 200;
 	/** 鉄を掘るテスト専用の高さ（隣の舞台が石の壁・落ちた鉄に重ならないように） */
 	private static final int MINE_FLOOR = 240;
+	/** リスポーンのテスト専用の高さ（隣の舞台がベッドを上書きすると世界の初期地点に戻ってしまう） */
+	private static final int RESPAWN_BED_FLOOR = 30;
 	private static final int LEN = 48;
 	private static final int WID = 9;
 
@@ -435,14 +437,14 @@ public class AiBuddyGameTests {
 	/** 死ぬと約3秒後に、同じ人格・名前・スキンで溶け0の新しい体がベッドの所に戻る。 */
 	@GameTest(maxTicks = 200)
 	public void deadMemberRespawnsWithSameIdentityAfterThreeSeconds(GameTestHelper h) {
-		buildArena(h);
-		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		buildArena(h, RESPAWN_BED_FLOOR);
+		FakeMember m = summon(h, 4.5f, 4.5f, false, RESPAWN_BED_FLOOR);
 		final String persona = "respawn_test_" + Long.toString(System.nanoTime() % 100000000L); // 再試行の残骸と混ざらない
 		m.setPersonaId(persona);
 		m.setSkinName("test_skin");
 		m.setDisplayNameText("Testo");
 		m.setMelt(0.6f);
-		net.minecraft.core.BlockPos headRel = new net.minecraft.core.BlockPos(14, STAND, 4);
+		net.minecraft.core.BlockPos headRel = new net.minecraft.core.BlockPos(14, RESPAWN_BED_FLOOR + 1, 4);
 		placeBed(h, headRel);
 		m.setBed(h.absolutePos(headRel), h.getLevel().dimension());
 		m.hurtServer(h.getLevel(), h.getLevel().damageSources().genericKill(), 1000f);
