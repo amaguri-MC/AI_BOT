@@ -208,6 +208,47 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	/** 壁（石）の中に埋まった鉄鉱石2個を、2つの間を往復せずに掘り切れること。 */
+	@GameTest(maxTicks = 1500)
+	public void mineTwoBuriedIronOresWithoutPingPong(GameTestHelper h) {
+		buildArena(h);
+		for (int x = 10; x <= 16; x++) {
+			for (int y = STAND; y <= STAND + 3; y++) {
+				for (int z = 1; z <= 7; z++) {
+					h.setBlock(x, y, z, Blocks.STONE);
+				}
+			}
+		}
+		h.setBlock(12, STAND + 1, 4, Blocks.IRON_ORE);
+		h.setBlock(14, STAND + 1, 3, Blocks.IRON_ORE);
+		FakeMember m = summon(h, 3.5f, 4.5f, false);
+		m.getInventory().addItem(new ItemStack(Items.STONE_PICKAXE));
+		String r = m.skills().start("mine", json("block", "iron", "count", 2));
+		h.assertTrue(!refused(r), "石のツルハシ持ちで mine iron が始まらない: " + r);
+		var st = new Object() {
+			double travelled;
+			Vec3 last;
+		};
+		h.onEachTick(() -> {
+			Vec3 p = rel(h, m);
+			if (st.last != null) {
+				st.travelled += p.distanceTo(st.last);
+			}
+			st.last = p;
+			if (h.getTick() % 100 == 0 || h.getTick() == 1400) {
+				com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[mine-test] t={} pos={} travelled={} iron={} status={}", h.getTick(), p, st.travelled, count(m, Items.RAW_IRON), m.skills().status());
+			}
+			if (h.getTick() == 1400) {
+				h.fail("鉄を掘り切れない: " + m.skills().status() + " travelled=" + st.travelled);
+			}
+			if (count(m, Items.RAW_IRON) >= 2) {
+				// 目標までの直線は十数ブロック。往復していれば移動距離が大きく膨らむ。
+				h.assertTrue(st.travelled < 60, "鉄を掘るまでの移動距離が長すぎる（往復？）: " + st.travelled);
+				h.succeed();
+			}
+		});
+	}
+
 	// ---- (3) 平らな40ブロックでダッシュ速度 5〜7.5 ブロック/秒 ----
 
 	@GameTest(maxTicks = 500)
