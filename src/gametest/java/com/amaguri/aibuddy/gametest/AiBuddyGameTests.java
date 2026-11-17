@@ -385,7 +385,7 @@ public class AiBuddyGameTests {
 		var source = server.createCommandSourceStack().withSuppressedOutput();
 		server.getCommands().performPrefixedCommand(source, "time set night");
 		FakeMember m = summon(h, 4.5f, 4.5f, false);
-		m.getInventory().addItem(new ItemStack(Items.RED_BED));
+		m.getInventory().addItem(new ItemStack(Items.BED.pick(net.minecraft.world.item.DyeColor.RED)));
 		h.assertTrue(com.amaguri.aibuddy.skill.SleepRules.shouldSleep(m), "夜でベッドを持っていれば寝てよい");
 		String r = m.skills().startAuto("sleep", new JsonObject());
 		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
@@ -399,7 +399,7 @@ public class AiBuddyGameTests {
 	}
 
 	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
-		var bed = Blocks.RED_BED.defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
+		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
 		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
 		h.setBlock(headRel, bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
 	}
