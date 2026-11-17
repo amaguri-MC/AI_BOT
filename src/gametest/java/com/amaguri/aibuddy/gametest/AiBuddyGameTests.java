@@ -891,6 +891,10 @@ public class AiBuddyGameTests {
 					z.setTarget(m);
 				}
 			}
+			if (t % 8 == 0 && t < 130) {
+				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
+						+ " status=" + m.skills().status() + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m));
+			}
 			h.assertTrue(!m.isInLava() && !m.isOnFire() || !m.isAlive(), "溶岩に落ちた rel=" + rel(h, m));
 			if (t >= 200) {
 				h.succeed();
