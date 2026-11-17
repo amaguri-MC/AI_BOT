@@ -914,6 +914,83 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	/** L字の幅1通路の舞台（溶岩の上）専用の高さ */
+	private static final int CORNER_FLOOR = 280;
+	/** 昆布の深い水の舞台は、他の舞台（y=20 以上）より下 */
+	private static final int KELP_FLOOR = 2;
+
+	/** 溶岩に囲まれた L字の幅1通路の角で敵に狙われても、角の切り欠きへ下がって落ちず、戦える。 */
+	@GameTest(maxTicks = 400)
+	public void fightsAtCornerOfOneWideLShapedPathWithoutFalling(GameTestHelper h) {
+		final int floor = CORNER_FLOOR;
+		buildHall(h, floor, 26, 7);
+		// 通路: x=5..14 の z=2（横の腕）と、x=14 の z=2..6（縦の腕）。角は (14,2)。それ以外の床は溶岩
+		for (int x = 1; x < 25; x++) {
+			for (int z = 1; z < WID - 1; z++) {
+				boolean path = (z == 2 && x >= 5 && x <= 14) || (x == 14 && z >= 2 && z <= 6);
+				if (!path) {
+					h.setBlock(x, floor, z, Blocks.LAVA);
+				}
+			}
+		}
+		FakeMember m = summon(h, 14.5f, 2.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.IRON_SWORD));
+		var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, 7.5f, (float) (floor + 1), 2.5f);
+		noBurn(z);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (z.isAlive()) {
+				z.setTarget(m);
+			}
+			h.assertTrue(m.isAlive() && !m.isInLava() && !m.isOnFire(), "L字の角で溶岩に落ちた/死んだ rel=" + rel(h, m) + " hp=" + m.getHealth());
+			if (!z.isAlive() || z.getHealth() < z.getMaxHealth() - 0.01) {
+				if (t >= 100) {
+					h.succeed();
+				}
+			} else if (t >= 360) {
+				h.fail("L字の角でゾンビと戦えない rel=" + rel(h, m) + " zombieHp=" + z.getHealth() + " status=" + m.skills().status());
+			}
+		});
+	}
+
+	/** 昆布の生えた深い水（10段）の底からでも浮き上がって息をし、溺れない。 */
+	@GameTest(maxTicks = 420)
+	public void doesNotDrownInDeepWaterWithKelp(GameTestHelper h) {
+		final int floor = KELP_FLOOR;
+		buildHall(h, floor, 7, 13);
+		final int top = floor + 10;
+		for (int x = 1; x <= 5; x++) {
+			for (int z = 1; z < WID - 1; z++) {
+				for (int y = floor + 1; y <= top; y++) {
+					// 昆布は水の中の植物（水を含む）。下から積み、上端は KELP、その上は水
+					net.minecraft.world.level.block.Block b = y < top - 2 ? Blocks.KELP_PLANT : y == top - 2 ? Blocks.KELP : Blocks.WATER;
+					if ((x + z) % 3 == 0 && y == floor + 1) {
+						b = Blocks.SEAGRASS;
+					} else if ((x + z) % 3 == 0) {
+						b = Blocks.WATER;
+					}
+					h.setBlock(x, y, z, b);
+				}
+			}
+		}
+		FakeMember m = summon(h, 3.5f, 4.5f, false, floor);
+		var st = new Object() {
+			boolean surfaced;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (m.getY() >= h.absolutePos(new net.minecraft.core.BlockPos(0, top - 1, 0)).getY()) {
+				st.surfaced = true;
+			}
+			h.assertTrue(m.isAlive() && m.getHealth() >= m.getMaxHealth() - 0.01,
+					"昆布の水で溺れた rel=" + rel(h, m) + " hp=" + m.getHealth() + " air=" + m.getAirSupply());
+			if (t >= 380) {
+				h.assertTrue(st.surfaced, "水面まで浮き上がらない rel=" + rel(h, m) + " air=" + m.getAirSupply());
+				h.succeed();
+			}
+		});
+	}
+
 	@GameTest(maxTicks = 500)
 	public void fightsBackAfterRunningFromTwoSpidersWithoutBlocks(GameTestHelper h) {
 		final int floor = SPIDER_FLOOR;

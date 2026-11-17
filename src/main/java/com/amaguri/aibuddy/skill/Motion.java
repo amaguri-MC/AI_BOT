@@ -441,27 +441,19 @@ final class Motion {
 		o.setSprinting(false);
 	}
 
-	/** 足元の四方のどこかが危険な縁なら、反対側（安全な床のある内側）の目標点を返す。縁でなければ null。 */
+	/**
+	 * 足元の四方（約1.5ブロック先）のどこかが致命的な縁（溶岩・火・10段以上の落下。SafeFooting.deadlyAt）なら、
+	 * 反対側の内側の目標点を返す。普通の段差・岸辺・深い水では発動しない。
+	 * 行き先とその途中も deadlyAt / groundAt で確かめ、斜め（L字の角の切り欠き）が危なければ軸の向きだけを試す。無ければ null。
+	 */
 	static Vec3 awayFromDeadlyEdge(FakeMember o) {
 		ServerLevel l = SkillUtil.level(o);
-		double sx = 0, sz = 0;
+		int sx = 0, sz = 0;
 		int bad = 0;
 		int[][] dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
 		for (int[] d : dirs) {
 			// 約1.5 ブロック内側に立つ: 縁の手前で殴られても、ノックバック（耐性0.5で約1.2ブロック）で落ちない
-			BlockPos c = BlockPos.containing(o.getX() + d[0] * 1.45, o.getY(), o.getZ() + d[1] * 1.45);
-			boolean floor = false;
-			boolean deadly = isDeadly(l.getBlockState(c));
-			for (int dd = 1; dd <= 2 && !deadly; dd++) {
-				BlockState st = l.getBlockState(c.below(dd));
-				if (isDeadly(st)) {
-					deadly = true;
-				} else if (st.blocksMotion()) {
-					floor = true;
-					break;
-				}
-			}
-			if (deadly || !floor) {
+			if (SafeFooting.deadlyAt(l, o.getX() + d[0] * 1.45, o.getZ() + d[1] * 1.45, o.getY())) {
 				sx -= d[0];
 				sz -= d[1];
 				bad++;
@@ -470,8 +462,26 @@ final class Motion {
 		if (bad == 0 || bad == 4 || (sx == 0 && sz == 0)) {
 			return null;
 		}
+		java.util.List<double[]> cands = new java.util.ArrayList<>();
 		double n = Math.sqrt(sx * sx + sz * sz);
-		return new Vec3(o.getX() + sx / n * 1.2, o.getY(), o.getZ() + sz / n * 1.2);
+		cands.add(new double[] { sx / n, sz / n });
+		if (sx != 0 && sz != 0) {
+			cands.add(new double[] { Math.signum(sx), 0 });
+			cands.add(new double[] { 0, Math.signum(sz) });
+		}
+		for (double[] c : cands) {
+			for (double k : new double[] { 1.2, 0.8 }) {
+				double tx = o.getX() + c[0] * k;
+				double tz = o.getZ() + c[1] * k;
+				double mx = o.getX() + c[0] * k * 0.5;
+				double mz = o.getZ() + c[1] * k * 0.5;
+				if (!SafeFooting.deadlyAt(l, tx, tz, o.getY()) && !SafeFooting.deadlyAt(l, mx, mz, o.getY())
+						&& !Double.isNaN(groundAt(l, tx, tz, o.getY()))) {
+					return new Vec3(tx, o.getY(), tz);
+				}
+			}
+		}
+		return null;
 	}
 
 	/** 跳んでも安全か: 進む向き（速度か体の向き）の 1〜2.5 ブロック先に、落差2以内の床があり溶岩・火でない。 */
@@ -694,10 +704,16 @@ final class Motion {
 	/** 真上に積む（ジャンプ→頂点で足元に置く）。頭上に石があれば digger で掘ってから。 */
 	static final class Pillar {
 		private BlockPos cell;
+		private boolean placed;
+		private int waitTicks;
+		private int fails;
 		int built;
 
 		void reset() {
 			cell = null;
+			placed = false;
+			waitTicks = 0;
+			fails = 0;
 			built = 0;
 		}
 
@@ -708,9 +724,24 @@ final class Motion {
 			o.setDeltaMovement(v.x * 0.2, v.y, v.z * 0.2);
 			if (o.onGround()) {
 				if (cell != null) {
-					built++;
-					cell = null;
-					return PILLAR_STEP;
+					if (placed && o.getY() >= cell.getY() + 0.9) {
+						// 跳んで足元に置けて、その上に乗った時だけ1段と数える
+						built++;
+						cell = null;
+						placed = false;
+						fails = 0;
+						return PILLAR_STEP;
+					}
+					// 跳べなかった（関門に止められた等）・置けなかった: 段は数えず、少し待ってから跳び直す
+					if (++waitTicks > 4) {
+						cell = null;
+						placed = false;
+						if (++fails >= 3) {
+							fails = 0;
+							return PILLAR_BLOCKED;
+						}
+					}
+					return PILLAR_WORKING;
 				}
 				BlockPos head2 = o.blockPosition().above(2);
 				if (l.getBlockState(head2).blocksMotion()) {
@@ -724,12 +755,16 @@ final class Motion {
 					return PILLAR_NO_BLOCK;
 				}
 				cell = o.blockPosition();
+				placed = false;
+				waitTicks = 0;
 				o.getJumpControl().jump();
-			} else if (cell != null && o.getY() >= cell.getY() + 1.0 && l.getBlockState(cell).canBeReplaced()) {
+			} else if (cell != null && !placed && o.getY() >= cell.getY() + 1.0 && l.getBlockState(cell).canBeReplaced()) {
+				// 跳んで足が cell より1段上がった時だけ置く
 				if (!placeScaffold(o, cell)) {
 					cell = null;
 					return PILLAR_NO_BLOCK;
 				}
+				placed = true;
 			}
 			return PILLAR_WORKING;
 		}

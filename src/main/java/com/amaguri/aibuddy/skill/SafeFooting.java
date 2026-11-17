@@ -4,6 +4,7 @@ import com.amaguri.aibuddy.entity.FakeMember;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.ai.control.JumpControl;
 import net.minecraft.world.entity.ai.control.MoveControl;
@@ -48,7 +49,7 @@ public final class SafeFooting {
 			if (lethal(st)) {
 				return true;
 			}
-			if (st.blocksMotion() || st.is(Blocks.WATER)) {
+			if (st.blocksMotion() || st.getFluidState().is(FluidTags.WATER)) { // 水・昆布・海草・泡の柱も水として床扱い
 				return false;
 			}
 		}
@@ -69,9 +70,10 @@ public final class SafeFooting {
 		return false;
 	}
 
-	/** 関門を素通りしてよい時: 世界にいない・もう溶岩の中（出るための動きは止めない）・乗り物の上。 */
+	/** 関門を素通りしてよい時: 世界にいない・もう溶岩の中（出るための動きは止めない）・水の中・乗り物の上。 */
 	private static boolean exempt(FakeMember o) {
-		return !(o.level() instanceof ServerLevel) || o.isInLava() || o.isPassenger() || o.isNoGravity();
+		// 水の中（泳ぐ・FloatGoal の浮上ジャンプ）は止めない: 溺れないことが先
+		return !(o.level() instanceof ServerLevel) || o.isInLava() || o.isInWater() || o.isPassenger() || o.isNoGravity();
 	}
 
 	/** 移動の関門。MoveControl が決めた入力（前後 zza・左右 xxa）を、体の向きで世界の向きにして確かめる。 */

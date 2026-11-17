@@ -74,6 +74,8 @@ final class Combat {
 		int creeperCd;
 		int backoffTicks;
 		Vec3 backoffFrom = Vec3.ZERO;
+		int edgeTicks;
+		int edgeCd;
 	}
 
 	private static final Map<FakeMember, State> STATES = new WeakHashMap<>();
@@ -114,15 +116,6 @@ final class Combat {
 			}
 			return;
 		}
-		// 敵がいる時に危険な縁（溶岩・奈落・2段超の落差）の1マス以内に立っていたら、まず内側へ1歩下がる（押されて落ちない）
-		if (!aggr.isEmpty() && o.onGround()) {
-			Vec3 in = Motion.awayFromDeadlyEdge(o);
-			if (in != null) {
-				o.getMoveControl().setWantedPosition(in.x, o.getY(), in.z, Motion.speedMod(o, false, 1.0));
-				o.setSprinting(false);
-				return;
-			}
-		}
 		if (o.tickCount >= st.noFleeUntil && shouldFlee(o, l, aggr, purposeful, day)) {
 			st.fighting = false;
 			lowerShield(o, st);
@@ -162,6 +155,26 @@ final class Combat {
 			}
 		} else {
 			st.backingOff = false;
+		}
+		// 敵がいる時に致命的な縁（溶岩・火・10段以上の落下）の約1.5ブロック以内に立っていたら、内側へ下がる（押されて落ちない）。
+		// クリーパー・避難の判断のあと。1回は最大20tick、そのあと3秒は下がらない（戦えなくならない・往復しない）
+		if (st.edgeCd > 0) {
+			st.edgeCd--;
+		}
+		if (!aggr.isEmpty() && o.onGround() && st.edgeCd <= 0) {
+			Vec3 in = Motion.awayFromDeadlyEdge(o);
+			if (in != null) {
+				if (++st.edgeTicks > 20) {
+					st.edgeTicks = 0;
+					st.edgeCd = 60;
+				} else {
+					o.getMoveControl().setWantedPosition(in.x, o.getY(), in.z, Motion.speedMod(o, false, 1.0));
+					o.setSprinting(false);
+					return;
+				}
+			} else {
+				st.edgeTicks = 0;
+			}
 		}
 		LivingEntity threat = scan(o, l, st, aggr, purposeful);
 		if (threat == null) {
