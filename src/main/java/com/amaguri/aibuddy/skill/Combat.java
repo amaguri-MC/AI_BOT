@@ -436,6 +436,23 @@ final class Combat {
 
 	/** 向きを保ったまま前後・左右に動く。 */
 	static void moveRel(FakeMember o, float fwd, float right, boolean sprint) {
+		// 足場の端・溶岩・深い穴へは踏み出さない（戦闘中のよけ・後退で落ちない）
+		double yaw = Math.toRadians(o.getYRot());
+		double lx = -Math.sin(yaw);
+		double lz = Math.cos(yaw);
+		if (Math.abs(fwd) > 0.01) {
+			double sg = Math.signum(fwd);
+			if (Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() + lx * sg * 1.3, o.getZ() + lz * sg * 1.3, o.getY()))) {
+				fwd = 0;
+			}
+		}
+		if (Math.abs(right) > 0.01) {
+			boolean bad = Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() + lz * 1.3, o.getZ() - lx * 1.3, o.getY()))
+					|| Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() - lz * 1.3, o.getZ() + lx * 1.3, o.getY()));
+			if (bad) {
+				right = 0;
+			}
+		}
 		o.setSprinting(sprint && fwd > 0);
 		double mod = Motion.speedMod(o, o.isSprinting(), 1.0);
 		o.getMoveControl().setWantedPosition(o.getX(), o.getY(), o.getZ(), mod);

@@ -877,6 +877,10 @@ public class AiBuddyGameTests {
 		}
 		FakeMember m = summon(h, 12.5f, 4.5f, false, floor);
 		m.getInventory().addItem(new ItemStack(Items.DIAMOND_SWORD)); // ブロックは持たない: 走って逃げるしかない
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.DIAMOND_LEGGINGS));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.DIAMOND_BOOTS));
 		var zs = new java.util.ArrayList<net.minecraft.world.entity.monster.zombie.Zombie>();
 		float[][] at = { { 10.5f, 2.5f }, { 14.5f, 6.5f } };
 		for (float[] a : at) {
@@ -893,9 +897,9 @@ public class AiBuddyGameTests {
 			}
 			if (t % 8 == 0 && t < 130) {
 				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
-						+ " status=" + m.skills().status() + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m));
+						+ " status=" + m.skills().status() + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
 			}
-			h.assertTrue(!m.isInLava() && !m.isOnFire() || !m.isAlive(), "溶岩に落ちた rel=" + rel(h, m));
+			h.assertTrue(m.isAlive() && !m.isInLava() && !m.isOnFire(), "溶岩に落ちた/死んだ rel=" + rel(h, m) + " hp=" + m.getHealth());
 			if (t >= 200) {
 				h.succeed();
 			}
