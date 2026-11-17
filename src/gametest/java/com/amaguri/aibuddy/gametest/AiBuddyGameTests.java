@@ -744,6 +744,118 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (11) 無駄に戦わない: 囲まれたら柱で逃げる／狙っていない敵には近づかない／クリーパーからは離れる ----
+
+	private static final int EVADE_FLOOR = 320;
+	private static final int IDLE_FLOOR = 335;
+	private static final int CREEPER_FLOOR = 350;
+
+	/** 床は土、横はガラス、天井は高さ height のガラス（柱を積んでも頭がつかえない）。 */
+	private static void buildHall(GameTestHelper h, int floor, int len, int height) {
+		forceChunks(h, floor, len);
+		for (int x = 0; x < len; x++) {
+			for (int z = 0; z < WID; z++) {
+				for (int y = 0; y <= height; y++) {
+					boolean edge = x == 0 || x == len - 1 || z == 0 || z == WID - 1 || y == height;
+					net.minecraft.world.level.block.Block b = y == 0 ? Blocks.DIRT : edge ? Blocks.GLASS : Blocks.AIR;
+					h.setBlock(x, floor + y, z, b);
+				}
+			}
+		}
+	}
+
+	private static void noBurn(net.minecraft.world.entity.Mob z) {
+		z.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET)); // 日光で燃えない
+		z.setDropChance(EquipmentSlot.HEAD, 0.0f);
+	}
+
+	@GameTest(maxTicks = 400)
+	public void climbsPillarWhenThreeZombiesTargetIt(GameTestHelper h) {
+		final int floor = EVADE_FLOOR;
+		buildHall(h, floor, 24, 10);
+		FakeMember m = summon(h, 12.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 12));
+		var zs = new java.util.ArrayList<net.minecraft.world.entity.monster.zombie.Zombie>();
+		float[][] at = { { 5.5f, 2.5f }, { 5.5f, 6.5f }, { 19.5f, 4.5f } };
+		for (float[] a : at) {
+			var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, a[0], (float) (floor + 1), a[1]);
+			noBurn(z);
+			zs.add(z);
+		}
+		var st = new Object() {
+			long topAt = -1;
+			float hpTop;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			for (var z : zs) {
+				if (z.isAlive()) {
+					z.setTarget(m); // 3体に狙われている状況を作る
+				}
+			}
+			double y = rel(h, m).y;
+			if (t % 20 == 0) {
+				System.out.println("[evadetest] t=" + t + " rel=" + rel(h, m) + " hp=" + m.getHealth() + " status=" + m.skills().status());
+			}
+			if (st.topAt < 0 && y >= floor + 1 + 2.7 && m.onGround()) {
+				st.topAt = t;
+				st.hpTop = m.getHealth();
+			}
+			if (st.topAt >= 0 && t >= st.topAt + 100) {
+				h.assertTrue(m.getHealth() >= st.hpTop - 0.01, "柱の上でもダメージを受け続けた hp " + st.hpTop + " → " + m.getHealth());
+				h.assertTrue(rel(h, m).y >= floor + 1 + 2.5, "柱から降りてしまった y=" + rel(h, m).y);
+				h.succeed();
+			} else if (t >= 300) {
+				h.assertTrue(false, "柱で安全地帯に上がれない top=" + st.topAt + " rel=" + rel(h, m) + " hp=" + m.getHealth());
+			}
+		});
+	}
+
+	@GameTest(maxTicks = 300)
+	public void doesNotApproachZombieThatIsNotTargetingIt(GameTestHelper h) {
+		final int floor = IDLE_FLOOR;
+		buildHall(h, floor, 24, 8);
+		FakeMember m = summon(h, 8.5f, 4.5f, false, floor);
+		var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, 13.5f, (float) (floor + 1), 4.5f);
+		noBurn(z);
+		z.setNoAi(true); // 動かず、こちらも狙わない
+		var st = new Object() {
+			double min = 99;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			st.min = Math.min(st.min, m.distanceTo(z));
+			if (t >= 120) {
+				h.assertTrue(st.min >= 4.0, "狙っていないゾンビに近づいた 最小距離 " + st.min);
+				h.assertTrue(z.getHealth() >= z.getMaxHealth() - 0.01, "狙っていないゾンビを殴った hp=" + z.getHealth());
+				h.succeed();
+			}
+		});
+	}
+
+	@GameTest(maxTicks = 300)
+	public void backsAwayFromCreeper(GameTestHelper h) {
+		final int floor = CREEPER_FLOOR;
+		buildHall(h, floor, 40, 8);
+		FakeMember m = summon(h, 14.5f, 4.5f, false, floor);
+		var c = h.spawn(net.minecraft.world.entity.EntityTypes.CREEPER, 10.5f, (float) (floor + 1), 4.5f);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (c.isAlive()) {
+				c.setTarget(m);
+			}
+			if (t % 20 == 0) {
+				System.out.println("[creepertest] t=" + t + " dist=" + m.distanceTo(c) + " hp=" + m.getHealth() + " creeperHp=" + c.getHealth());
+			}
+			if (t == 40) {
+				h.assertTrue(c.isAlive() && c.getHealth() >= c.getMaxHealth() - 0.01, "クリーパーを殴った");
+				h.assertTrue(m.getHealth() >= m.getMaxHealth() - 0.01, "クリーパーに爆破された hp=" + m.getHealth());
+				h.assertTrue(m.distanceTo(c) >= 6.0, "クリーパーから離れない 距離 " + m.distanceTo(c));
+				h.succeed();
+			}
+		});
+	}
+
 	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
 		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
 		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));

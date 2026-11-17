@@ -59,6 +59,7 @@ final class Nav {
 	private BoatSkill.Ride ride;
 	private int rideCooldown;
 	private int scanTimer = 20;
+	private int avoidCd;
 
 	// DIG
 	private final List<BlockPos> digQueue = new ArrayList<>();
@@ -227,6 +228,36 @@ final class Nav {
 	private boolean reachable(Vec3 t) {
 		Path p = o.getNavigation().createPath(BlockPos.containing(t.x, t.y, t.z), 1);
 		return p != null && p.canReach();
+	}
+
+	/** 前方5ブロック以内に、こちらを狙っていない敵がいれば、横へよける点。無ければ null。 */
+	private Vec3 avoidIdleHostile() {
+		ServerLevel l = SkillUtil.level(o);
+		Vec3 pos = o.position();
+		double gx = goal.x - pos.x;
+		double gz = goal.z - pos.z;
+		double gl = Math.sqrt(gx * gx + gz * gz);
+		if (gl < 1.0) {
+			return null;
+		}
+		gx /= gl;
+		gz /= gl;
+		for (net.minecraft.world.entity.LivingEntity e : l.getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,
+				o.getBoundingBox().inflate(5, 3, 5), x -> x.isAlive() && Combat.isThreat(o, x))) {
+			if (e instanceof net.minecraft.world.entity.Mob m && m.getTarget() == o) {
+				continue; // 狙われているなら Combat が扱う
+			}
+			double ex = e.getX() - pos.x;
+			double ez = e.getZ() - pos.z;
+			double fwd = ex * gx + ez * gz;
+			double lat = ex * -gz + ez * gx;
+			if (fwd < -0.5 || Math.abs(lat) > 2.5) {
+				continue; // 進路の脇・後ろは気にしない
+			}
+			double sgn = lat > 0 ? -1 : 1; // 敵と反対側へ
+			return SkillUtil.snap(o, pos.x + gx * 3 + (-gz) * 4 * sgn, pos.z + gz * 3 + gx * 4 * sgn, pos.y);
+		}
+		return null;
 	}
 
 	// ---- 泳ぐ / ボート ----
@@ -434,6 +465,18 @@ final class Nav {
 			sinceRepath = 0;
 		}
 		nav.setSpeedModifier(mod);
+		if (avoidCd > 0) {
+			avoidCd--;
+		} else if (o.tickCount % 10 == 0 && !Motion.shouldSwim(o)) {
+			Vec3 side = avoidIdleHostile();
+			if (side != null) {
+				// 狙っていない敵には近づかない: 進路を少し曲げて距離を取る
+				nav.moveTo(side.x, side.y, side.z, mod);
+				pathTarget = side;
+				sinceRepath = 0;
+				avoidCd = 30;
+			}
+		}
 		if (rideCooldown > 0) {
 			rideCooldown--;
 		}

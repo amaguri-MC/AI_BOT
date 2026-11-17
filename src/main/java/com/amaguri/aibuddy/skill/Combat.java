@@ -67,6 +67,10 @@ final class Combat {
 		LivingEntity lastEngaged;
 		int repath;
 		final Motion.FallGuard fall = new Motion.FallGuard();
+		final Evade evade = new Evade();
+		/** この tickCount までは避難を始めない（60秒待ったあとは慎重に進む） */
+		int noFleeUntil;
+		boolean backingOff;
 	}
 
 	private static final Map<FakeMember, State> STATES = new WeakHashMap<>();
@@ -77,7 +81,7 @@ final class Combat {
 
 	static boolean isFighting(FakeMember o) {
 		State s = STATES.get(o);
-		return s != null && s.fighting;
+		return s != null && (s.fighting || s.evade.active || s.backingOff);
 	}
 
 	/** SkillRunner.tick から毎tick。 */
@@ -91,7 +95,37 @@ final class Combat {
 		if (o.tickCount % 3 == 0 && Motion.lavaBrake(o) && st.fighting) {
 			st.backTicks = 0;
 		}
-		LivingEntity threat = scan(o, l, st);
+		boolean purposeful = purposeful(o);
+		boolean day = !Observer.isNight(l);
+		// 周囲の敵を整理: こちらを狙っている敵（aggr）と、そうでない敵
+		List<LivingEntity> aggr = aggressors(o, l, st);
+		if (st.evade.active) {
+			if (!st.evade.tick(o, aggr, day)) {
+				if (st.evade.waitedOut()) {
+					st.noFleeUntil = o.tickCount + 600; // 待ち切った: 敵が残っていても慎重に進む
+				}
+				endFight(o, st);
+			}
+			return;
+		}
+		if (o.tickCount >= st.noFleeUntil && shouldFlee(o, l, aggr, purposeful, day)) {
+			st.fighting = false;
+			lowerShield(o, st);
+			st.evade.begin(o, aggr);
+			st.evade.tick(o, aggr, day);
+			return;
+		}
+		// クリーパーは殴らない。近づかれたら離れる
+		Creeper creeper = nearestCreeper(o, l);
+		st.backingOff = false;
+		if (creeper != null && !purposeful) {
+			st.backingOff = true;
+			st.calm = 0;
+			Motion.face(o, creeper.getEyePosition());
+			moveRel(o, -1.0f, 0.0f, true);
+			return;
+		}
+		LivingEntity threat = scan(o, l, st, aggr, purposeful);
 		if (threat == null) {
 			if (st.fighting && ++st.calm > 40 && !st.retreating) {
 				endFight(o, st);
@@ -108,6 +142,69 @@ final class Combat {
 		}
 		st.target = threat;
 		fightTick(o, st, threat);
+	}
+
+	/** 戦うこと自体が今の目的（attack / hunt / エンドラ戦）か。 */
+	static boolean purposeful(FakeMember o) {
+		String s = o.skills().status();
+		return s.contains("と戦っている") || s.contains("を狩っている") || s.startsWith("エンドラ戦");
+	}
+
+	private static boolean attackedMe(FakeMember o, LivingEntity e) {
+		return o.getLastHurtByMob() == e && o.tickCount - o.getLastHurtByMobTimestamp() < 100;
+	}
+
+	/** いまこちらを狙っている／殴ってきた敵（14ブロック以内）。 */
+	static List<LivingEntity> aggressors(FakeMember o, ServerLevel l, State st) {
+		List<LivingEntity> out = new java.util.ArrayList<>();
+		AABB box = o.getBoundingBox().inflate(14, 8, 14);
+		for (LivingEntity e : l.getEntitiesOfClass(LivingEntity.class, box, x -> isThreat(o, x))) {
+			boolean targeting = e instanceof net.minecraft.world.entity.Mob m && m.getTarget() == o;
+			if ((targeting || attackedMe(o, e)) && !isIgnored(o, st, e)) {
+				out.add(e);
+			}
+		}
+		out.sort((a, b) -> Double.compare(a.distanceToSqr(o), b.distanceToSqr(o)));
+		return out;
+	}
+
+	private static Creeper nearestCreeper(FakeMember o, ServerLevel l) {
+		Creeper best = null;
+		double bd = 7 * 7;
+		for (Creeper c : l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(7, 4, 7), Creeper::isAlive)) {
+			double d = c.distanceToSqr(o);
+			if (d < bd && (d < 3 * 3 || o.hasLineOfSight(c))) {
+				bd = d;
+				best = c;
+			}
+		}
+		return best;
+	}
+
+	/** 逃げる条件: 2体以上に狙われる／体力8以下／夜で武器が木以下／（目的の戦いでは体力8以下だけ）。 */
+	private static boolean shouldFlee(FakeMember o, ServerLevel l, List<LivingEntity> aggr, boolean purposeful, boolean day) {
+		if (aggr.isEmpty() || o.isPuddle()) {
+			return false;
+		}
+		if (purposeful) {
+			return o.getHealth() <= LOW_HP && Motion.scaffoldCount(o) >= 2;
+		}
+		if (aggr.size() >= 2 || o.getHealth() <= LOW_HP) {
+			return true;
+		}
+		if (!day && weakWeapon(o)) {
+			return true;
+		}
+		return false;
+	}
+
+	private static boolean weakWeapon(FakeMember o) {
+		ItemStack w = Inv.bestWeapon(o);
+		if (w.isEmpty()) {
+			return true;
+		}
+		String p = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(w.getItem()).getPath();
+		return p.startsWith("wooden_") || p.startsWith("golden_");
 	}
 
 	/** 同じtickに何度呼ばれても1回だけ減らす（Combat.tick が呼ばれない間も、スキル側から呼べる）。負の値 = 準備完了からの経過。 */
@@ -130,18 +227,22 @@ final class Combat {
 
 	// ---- 脅威の選択 ----
 
-	private static LivingEntity scan(FakeMember o, ServerLevel l, State st) {
+	private static LivingEntity scan(FakeMember o, ServerLevel l, State st, List<LivingEntity> aggr, boolean purposeful) {
 		if (o.tickCount % 4 != 0 && st.target != null && st.target.isAlive() && o.distanceToSqr(st.target) < 14 * 14
 				&& !isIgnored(o, st, st.target)) {
 			return st.target;
 		}
 		AABB box = o.getBoundingBox().inflate(16, 8, 16);
 		List<LivingEntity> list = l.getEntitiesOfClass(LivingEntity.class, box, e -> isThreat(o, e));
+		// 戦うのは: こちらを狙っている／殴ってきた敵、進路を塞ぐ敵（すぐ目の前）、目的の戦い。それ以外の敵は避ける（近づかない）
 		LivingEntity best = null;
 		double bd = Double.MAX_VALUE;
 		for (LivingEntity e : list) {
 			double d = e.distanceToSqr(o);
-			if (isIgnored(o, st, e)) {
+			if (isIgnored(o, st, e) || e instanceof Creeper) {
+				continue;
+			}
+			if (!purposeful && !aggr.contains(e) && d > 2.2 * 2.2) {
 				continue;
 			}
 			// 近接は「7ブロック以内で、見えている（または手が届く距離）」ときだけ。壁の向こう・洞窟の敵で戦闘が終わらなくなるのを防ぐ

@@ -485,6 +485,15 @@ final class Motion {
 	private static final Item[] SCAFFOLD = { Items.COBBLESTONE, Items.DIRT, Items.NETHERRACK, Items.COBBLED_DEEPSLATE,
 			Items.STONE, Items.END_STONE, Items.BLACKSTONE, Items.OAK_PLANKS };
 
+	/** 足場にできるブロックの合計個数。 */
+	static int scaffoldCount(FakeMember o) {
+		int n = 0;
+		for (Item i : SCAFFOLD) {
+			n += Inv.count(o, i);
+		}
+		return n;
+	}
+
 	static boolean hasScaffold(FakeMember o) {
 		for (Item i : SCAFFOLD) {
 			if (Inv.count(o, i) > 0) {
