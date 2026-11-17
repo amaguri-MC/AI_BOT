@@ -33,6 +33,8 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 	/** 溶けがこれ以上なら手持ちアイテムは描かない（腕の位置が変形後の体とずれるため）。 */
 	private static final float LAYERS_MELT_LIMIT = 0.25f;
 
+	/** EntityRenderDispatcherMixin が参照する。 */
+	public static FakeMemberRenderer INSTANCE;
 	private int dbg;
 	private int dbgScale;
 	private int dbgSubmit;
@@ -44,6 +46,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		this.wideModel = this.model;
 		this.slimModel = new PlayerModel(ctx.bakeLayer(ModelLayers.PLAYER_SLIM), true);
 		this.addLayer(new PlayerItemInHandLayer<>(this));
+		INSTANCE = this;
 	}
 
 	@Override
