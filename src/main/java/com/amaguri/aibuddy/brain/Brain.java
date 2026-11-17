@@ -95,29 +95,24 @@ final class Brain {
 	void onChat(int now, String name, String text, boolean near, boolean called, boolean fromBot, boolean voice) {
 		if (!near && !called) return;
 		// スタートの合図は LLM を待たずに即開始（近くのプレイヤーの声・チャットのみ。他のAIの発言では始めない）
-		if (!fromBot && near && isStartCue(text)) startRun();
+		if (!fromBot && near && StartCue.isStartCue(text)) startRun();
 		chats.addLast(new Chat(now, name, text, voice));
 		while (chats.size() > MAX_CHATS) chats.removeFirst();
 		if (!fromBot || called) chatPending = true;
 	}
 
-	private static final String[] START_CUES = { "スタート", "すたーと", "始めよう", "はじめよう", "始めて", "はじめて", "はじめ",
-			"開始", "よーいどん", "よーい、どん", "よーいドン", "いくぞ", "行くぞ", "start" };
-
-	private static boolean isStartCue(String text) {
-		String t = text.toLowerCase(java.util.Locale.ROOT).replace("はじめまして", "").replace("初めまして", "");
-		for (String c : START_CUES) if (t.contains(c)) return true;
-		return false;
+	/** 実行中＝開始済みで有効。再起動後・/aibuddy run on|off でも Autopilot の実状態を見るのでずれない。 */
+	private boolean running() {
+		try {
+			return member.autopilot().isStarted() && member.autopilot().isEnabled();
+		} catch (RuntimeException e) {
+			return false;
+		}
 	}
 
-	/** 自分で開始済みにした印。Autopilot 側の開始状態が公開されたらそちらを優先する。 */
-	private boolean started;
-
-	/** 開始済みなら何もしない。 */
+	/** 実行中なら何もしない。run off 後の再スタートも start() が有効化する。 */
 	private String startRun() {
-		if (started) return "もう始めている";
-		started = true;
-		// UNVERIFIED: Autopilot.start() は W3 が追加する public メソッド（署名どおり呼ぶ）。開始済みの判定は未公開なので Brain の印で代用
+		if (running()) return "もう始めている";
 		member.autopilot().start();
 		return "スタートした。自動進行を始めた";
 	}
@@ -255,7 +250,7 @@ final class Brain {
 	private String buildUserText(int now, String trigger) {
 		SkillRunner sk = member.skills();
 		StringBuilder sb = new StringBuilder();
-		sb.append("進行状態: ").append(started ? "進行中" : "スタート待ち（合図があるまで体は動かない。雑談して待つ）").append('\n');
+		sb.append("進行状態: ").append(running() ? "進行中" : "スタート待ち（合図があるまで体は動かない。雑談して待つ）").append('\n');
 		sb.append("今の段階: ").append(safe(() -> member.autopilot().stageName())).append('\n');
 		sb.append("目標: ").append(safe(() -> member.autopilot().goalText())).append('\n');
 		sb.append("状況: ").append(safe(sk::observe)).append('\n');
