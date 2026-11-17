@@ -4,14 +4,17 @@ package com.amaguri.aibuddy.brain;
 final class BrainSettings {
 	String apiKey = "";
 	String model = "claude-haiku-5-5";
+	/** 旧設定（v0.1）。W4 以降は使わない（config.json の互換のためだけに残す）。 */
 	int thinkIntervalSec = 8;
+	/** 暇つぶしの独り言を呼ぶ最短間隔（秒）。出来事・チャット・声のときは関係なく呼ぶ。 */
+	int idleTalkSec = 45;
 	int maxTokens = 400;
 	/** 1回の思考から次の思考までの最短間隔（秒）。 */
 	int minGapSec = 3;
 	int requestTimeoutSec = 30;
 	/** 近くのプレイヤーのチャットに反応する半径。 */
 	int chatRadius = 64;
-	/** 保持する往復数。 */
+	/** 旧設定（v0.1）。W4 以降は履歴を持たないので使わない。 */
 	int historyTurns = 12;
 	/** 429・タイムアウトなどの後にAPIを休む秒数。 */
 	int backoffSec = 30;
@@ -21,6 +24,7 @@ final class BrainSettings {
 		if (model == null || model.isBlank()) model = "claude-haiku-5-5";
 		thinkIntervalSec = Math.max(1, thinkIntervalSec);
 		maxTokens = Math.max(64, Math.min(4096, maxTokens));
+		idleTalkSec = Math.max(10, idleTalkSec);
 		minGapSec = Math.max(1, minGapSec);
 		requestTimeoutSec = Math.max(5, requestTimeoutSec);
 		chatRadius = Math.max(1, chatRadius);

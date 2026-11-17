@@ -1,0 +1,247 @@
+package com.amaguri.aibuddy.gametest;
+
+import java.util.List;
+
+import com.google.gson.JsonObject;
+
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
+
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.Vec3;
+
+import com.amaguri.aibuddy.entity.FakeMember;
+import com.amaguri.aibuddy.entity.ModEntities;
+
+/**
+ * 実機で言われた不満（最初から強い・歩きが遅い・素手でも掘れる）を二度と起こさないためのサーバー gametest。
+ * 舞台は arena.snbt（48x6x9、床は土、周りはガラス）。座標はすべて GameTestHelper の相対座標。
+ * 実行: ./gradlew runGameTest
+ */
+public class AiBuddyGameTests {
+	private static final String ARENA = "aibuddy:arena";
+
+	// ---- helpers ----
+
+	private static FakeMember summon(GameTestHelper h, float x, float z, boolean autopilot) {
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, x, 1f, z);
+		if (!autopilot) {
+			// 指示なしで勝手に動く Autopilot を止め、スキルだけを試す。
+			// UNVERIFIED: FakeMember.autopilot() / Autopilot.setEnabled(boolean) は CONTRACT W3 の署名。まだ実装が無いかもしれない
+			m.autopilot().setEnabled(false);
+		}
+		return m;
+	}
+
+	private static JsonObject json(Object... kv) {
+		JsonObject o = new JsonObject();
+		for (int i = 0; i < kv.length; i += 2) {
+			Object v = kv[i + 1];
+			if (v instanceof Number n) {
+				o.addProperty((String) kv[i], n);
+			} else {
+				o.addProperty((String) kv[i], String.valueOf(v));
+			}
+		}
+		return o;
+	}
+
+	private static boolean refused(String startResult) {
+		return startResult == null || startResult.startsWith("できない");
+	}
+
+	private static int count(FakeMember m, Item item) {
+		int n = 0;
+		for (int i = 0; i < m.getInventory().getContainerSize(); i++) {
+			ItemStack s = m.getInventory().getItem(i);
+			if (s.is(item)) {
+				n += s.getCount();
+			}
+		}
+		return n;
+	}
+
+	/** 持ち物＋足元に落ちている分。 */
+	private static int countIncludingDropped(GameTestHelper h, FakeMember m, Item item) {
+		int n = count(m, item);
+		// getEntitiesOfClass は絶対座標の AABB を取る（getBounds() は絶対）
+		List<ItemEntity> drops = h.getLevel().getEntitiesOfClass(ItemEntity.class, h.getBounds());
+		for (ItemEntity e : drops) {
+			if (e.getItem().is(item)) {
+				n += e.getItem().getCount();
+			}
+		}
+		return n;
+	}
+
+	private static Vec3 rel(GameTestHelper h, FakeMember m) {
+		return h.relativeVec(m.position());
+	}
+
+	// ---- (1) 召喚直後の持ち物が空 ----
+
+	@GameTest(structure = ARENA, maxTicks = 80)
+	public void summonedMemberHasEmptyInventory(GameTestHelper h) {
+		FakeMember m = summon(h, 4.5f, 4.5f, true); // Autopilot は既定のまま（召喚直後は on）
+		h.runAfterDelay(40, () -> {
+			h.assertTrue(m.getInventory().isEmpty(), "召喚直後・40tick後でも持ち物が空であること");
+			for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+				if (slot == EquipmentSlot.BODY || slot == EquipmentSlot.SADDLE) {
+					continue;
+				}
+				h.assertTrue(m.getItemBySlot(slot).isEmpty(), "装備スロット " + slot.getName() + " が空であること");
+			}
+			h.succeed();
+		});
+	}
+
+	// ---- (2) 素手の石は遅くてドロップ無し、木のツルハシなら丸石 ----
+
+	private enum Phase { BARE_START, BARE_WAIT, PICK_START, PICK_WAIT }
+
+	@GameTest(structure = ARENA, maxTicks = 900)
+	public void mineStoneBareHandsVsWoodenPickaxe(GameTestHelper h) {
+		final int bareX = 8;
+		final int pickX = 8;
+		h.setBlock(bareX, 1, 4, Blocks.STONE);
+		FakeMember m = summon(h, 3.5f, 4.5f, false);
+		var st = new Object() {
+			Phase phase = Phase.BARE_START;
+			long startedAt;
+		};
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			switch (st.phase) {
+				case BARE_START -> {
+					String r = m.skills().start("mine", json("block", "stone", "count", 1));
+					st.startedAt = now;
+					st.phase = Phase.BARE_WAIT;
+					if (refused(r)) {
+						// 素手では掘らない実装でもよい（速く・タダで掘れなければ目的は満たす）。次へ。
+						h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(bareX, 1, 4)).is(Blocks.STONE),
+								"断ったのに石が消えている: " + r);
+						st.phase = Phase.PICK_START;
+					}
+				}
+				case BARE_WAIT -> {
+					long el = now - st.startedAt;
+					boolean gone = !h.getBlockState(new net.minecraft.core.BlockPos(bareX, 1, 4)).is(Blocks.STONE);
+					// バニラの素手は石に約150tick。歩く時間を差し引いても90tick未満で壊れたら速すぎ。
+					if (gone && el < 90) {
+						h.fail("素手で石が " + el + " tick で壊れた（速すぎ。バニラは約150tick）");
+					}
+					if (gone || el > 400 || !m.skills().isBusy()) {
+						h.assertTrue(countIncludingDropped(h, m, Items.COBBLESTONE) == 0,
+								"素手で石を掘って丸石が出た（適正道具でないのでドロップ無しのはず）");
+						m.skills().stop();
+						st.phase = Phase.PICK_START;
+					}
+				}
+				case PICK_START -> {
+					m.getInventory().addItem(new ItemStack(Items.WOODEN_PICKAXE));
+					h.setBlock(pickX, 1, 4, Blocks.STONE);
+					String r = m.skills().start("mine", json("block", "stone", "count", 1));
+					h.assertTrue(!refused(r), "木のツルハシ持ちで mine が始まらない: " + r);
+					st.startedAt = now;
+					st.phase = Phase.PICK_WAIT;
+				}
+				case PICK_WAIT -> {
+					long el = now - st.startedAt;
+					// バニラの木のツルハシは石に約23tick。歩きと拾いを含めて 200tick 以内に丸石が手に入ること。
+					if (count(m, Items.COBBLESTONE) >= 1) {
+						h.succeed();
+					} else if (el > 200) {
+						h.fail("木のツルハシで 200tick 経っても丸石が持ち物に入らない（status=" + m.skills().status() + "）");
+					}
+				}
+			}
+		});
+	}
+
+	// ---- (3) 平らな40ブロックでダッシュ速度 5〜7.5 ブロック/秒 ----
+
+	@GameTest(structure = ARENA, maxTicks = 500)
+	public void sprintSpeedOnFlatGround(GameTestHelper h) {
+		final double startX = 2.5;
+		final double targetX = 42.5;
+		FakeMember m = summon(h, (float) startX, 4.5f, false);
+		Vec3 target = h.absoluteVec(new Vec3(targetX, 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			long t0 = -1;
+			long t1 = -1;
+		};
+		h.onEachTick(() -> {
+			double x = rel(h, m).x;
+			// 加速と到着の減速を除いて、x=8 → x=40 の32ブロックを測る
+			if (st.t0 < 0 && x >= 8.0) {
+				st.t0 = h.getTick();
+			}
+			if (st.t0 >= 0 && st.t1 < 0 && x >= 40.0) {
+				st.t1 = h.getTick();
+				double seconds = (st.t1 - st.t0) / 20.0;
+				double speed = 32.0 / seconds;
+				h.assertTrue(speed >= 5.0 && speed <= 7.5,
+						String.format("ダッシュ速度 %.2f ブロック/秒（5.0〜7.5 のはず）", speed));
+				h.succeed();
+			}
+		});
+	}
+
+	// ---- (4) 原木4から 作業台 と 木のツルハシ を作れる ----
+
+	@GameTest(structure = ARENA, maxTicks = 400)
+	public void craftTableAndWoodenPickaxeFromFourLogs(GameTestHelper h) {
+		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		m.getInventory().addItem(new ItemStack(Items.OAK_LOG, 4));
+		var st = new Object() {
+			int step = 0;
+			long startedAt;
+		};
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			if (st.step == 0) {
+				// UNVERIFIED: craft{item,count} は原木→板材の中間素材を自動で作る（CONTRACT W1 の想定）。item は英語ID
+				String r = m.skills().start("craft", json("item", "crafting_table", "count", 1));
+				h.assertTrue(!refused(r), "作業台の craft が始まらない: " + r);
+				st.startedAt = now;
+				st.step = 1;
+			} else if (st.step == 1 && !m.skills().isBusy()) {
+				// 作業台は持ち物にあるか、すでに置かれている（3x3 のレシピ用に自分で置く実装でもよい）
+				String r = m.skills().start("craft", json("item", "wooden_pickaxe", "count", 1));
+				h.assertTrue(!refused(r), "木のツルハシの craft が始まらない: " + r);
+				st.startedAt = now;
+				st.step = 2;
+			} else if (st.step == 2 && !m.skills().isBusy()) {
+				h.assertTrue(count(m, Items.WOODEN_PICKAXE) >= 1,
+						"木のツルハシが持ち物に無い（結果: " + m.skills().status() + "）");
+				boolean table = count(m, Items.CRAFTING_TABLE) >= 1 || hasPlacedTable(h);
+				h.assertTrue(table, "作業台が持ち物にも周囲にも無い");
+				h.succeed();
+			}
+			if (st.step > 0 && now - st.startedAt > 250) {
+				h.fail("craft が 250tick で終わらない（step=" + st.step + " status=" + m.skills().status() + "）");
+			}
+		});
+	}
+
+	private static boolean hasPlacedTable(GameTestHelper h) {
+		var b = h.getRelativeBounds();
+		for (int x = (int) b.minX; x < b.maxX; x++) {
+			for (int y = 1; y < 4; y++) {
+				for (int z = (int) b.minZ; z < b.maxZ; z++) {
+					if (h.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(Blocks.CRAFTING_TABLE)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+}

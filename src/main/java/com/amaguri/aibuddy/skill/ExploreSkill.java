@@ -65,7 +65,6 @@ final class ExploreSkill extends Skill {
 	@Override
 	void tick() {
 		legTicks++;
-		nav.setSprint(true);
 		nav.tick();
 		if (nav.arrived() || nav.failed() || legTicks > 900) {
 			if (legs >= MAX_LEGS) {

@@ -69,6 +69,7 @@ public class FakeMember extends PathfinderMob {
 	private final SimpleContainer inventory = new SimpleContainer(INVENTORY_SIZE);
 	private final ConcurrentLinkedQueue<String> events = new ConcurrentLinkedQueue<>();
 	private SkillRunner skills;
+	private com.amaguri.aibuddy.run.Autopilot autopilot;
 	private boolean attached;
 	private float lastAppliedSlowMelt = -1f;
 
@@ -79,11 +80,12 @@ public class FakeMember extends PathfinderMob {
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
-		// MOVEMENT_SPEED 0.13 = player base 0.1 x sprint 1.3.
-		// UNVERIFIED: mob movement-speed attribute may translate to blocks/s differently than the player's; tune in-game.
+		// MOVEMENT_SPEED 0.25: mob の移動は加速度 = 0.98 * (speedModifier * 属性)^2 なので、
+		// 歩き4.3 / ダッシュ5.6 / ダッシュジャンプ7 ブロック/秒になる speedModifier を skill/Motion が逆算する。
+		// 属性値は skill/Motion.BASE_SPEED と同じ値にすること（式の根拠は Motion のコメント。UNVERIFIED: 実測は gametest）。
 		return PathfinderMob.createMobAttributes()
 				.add(Attributes.MAX_HEALTH, 20.0)
-				.add(Attributes.MOVEMENT_SPEED, 0.13)
+				.add(Attributes.MOVEMENT_SPEED, 0.25)
 				.add(Attributes.ATTACK_DAMAGE, 1.0)
 				.add(Attributes.FOLLOW_RANGE, 64.0)
 				.add(Attributes.STEP_HEIGHT, 1.0);
@@ -187,6 +189,14 @@ public class FakeMember extends PathfinderMob {
 		return skills;
 	}
 
+	/** 自動進行（W3）。召喚直後は on。 */
+	public com.amaguri.aibuddy.run.Autopilot autopilot() {
+		if (autopilot == null) {
+			autopilot = new com.amaguri.aibuddy.run.Autopilot(this);
+		}
+		return autopilot;
+	}
+
 	/** サーバー全員のチャットに、プレイヤー発言と同じ見た目で流す。溶け>0.5 なら崩す。 */
 	public void say(String text) {
 		if (text == null || text.isBlank() || !(level() instanceof ServerLevel serverLevel)) {
@@ -255,6 +265,7 @@ public class FakeMember extends PathfinderMob {
 				haltForPuddle();
 			}
 		} else {
+			autopilot().tick();
 			skills().tick();
 		}
 	}
@@ -390,6 +401,7 @@ public class FakeMember extends PathfinderMob {
 		output.putFloat("Melt", getMelt());
 		// UNVERIFIED: ItemStack.CODEC (non-optional) assumed correct for storeAsItemList (empty slots are skipped).
 		inventory.storeAsItemList(output.list("Inventory", ItemStack.CODEC));
+		output.store("Autopilot", net.minecraft.nbt.CompoundTag.CODEC, autopilot().save());
 	}
 
 	@Override
@@ -401,6 +413,7 @@ public class FakeMember extends PathfinderMob {
 		// set directly: loading must not fire threshold events
 		this.entityData.set(DATA_MELT, Math.max(0f, Math.min(1f, input.getFloatOr("Melt", 0f))));
 		this.inventory.fromItemList(input.listOrEmpty("Inventory", ItemStack.CODEC));
+		input.read("Autopilot", net.minecraft.nbt.CompoundTag.CODEC).ifPresent(t -> autopilot().load(t));
 		this.lastAppliedSlowMelt = -1f;
 		if (!level().isClientSide()) {
 			updateMeltSlow();

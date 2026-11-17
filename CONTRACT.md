@@ -61,3 +61,70 @@ public final class SkillRunner {
   public String observe();      // 周囲の要約（体力・手持ち・近くのプレイヤー/敵/鉱石・時間・次元・座標）
 }
 ```
+
+---
+# v0.2 追記（自力でエンドラまで・本物のサバイバル・速い動き・見ていない所は早送り）
+
+## 全体の流れ
+- 行動を決めるのは **Autopilot（run パッケージ）**。AI（脳）は喋るのと、たまに「ついてく」等の割り込みだけ。脳を待って止まることは無い
+- 召喚時の持ち物は**空**。道具は木→石→鉄と自分で作る。掘る速さ・ドロップはプレイヤーと同じ規則（持っている道具次第）
+- 誰も近くにいない（全次元で64ブロック内にプレイヤー無し、スペクテイターは「見ている」扱い）状態が20秒続いたら早送り。人が近づいたら本当に動く
+
+## W1 サバイバルの手（skill/ の Digger, MineSkill, Inv, Recipes, CraftSkill, SmeltSkill, SurvivalSkills, EatSkill）
+```java
+final class Inv { // FakeMember.getInventory() の操作をここに集約（他担当も使う）
+  static int count(FakeMember o, Item i); static int count(FakeMember o, TagKey<Item> t);
+  static boolean remove(FakeMember o, Item i, int n); static void add(FakeMember o, ItemStack s); // 入らない分は足元に落とす
+  static ItemStack bestTool(FakeMember o, BlockState s);   // 一番速い道具（無ければ EMPTY）
+  static ItemStack bestWeapon(FakeMember o);
+  static void equip(FakeMember o, ItemStack s);            // 手に持たせる（見た目と攻撃力に反映。実物の道具を持つ）
+  static void damageTool(FakeMember o, ItemStack s, int n); // 耐久を減らし0で壊す（音つき）
+}
+public final class SurvivalSkills {
+  static Skill create(String name, FakeMember o, SkillRunner r, JsonObject in); // 知らない名前は null
+  static void specs(JsonArray out);
+}
+```
+- スキル名: `mine{block,count}`（既存を本物化）`craft{item,count}` `smelt{item,count}`（焼く・食べ物を焼くも）`eat`
+- 破壊時間はバニラと同じ式（硬さ・道具の速さ・適正道具か）。適正道具でないとドロップ無し。道具の耐久を減らす
+- craft: 2x2 は手元で、3x3 は近く4ブロック内の作業台（無ければ作って置く）。レシピは RecipeManager か手書き表（原木→板材, 棒, 作業台, 木/石/鉄のツルハシ・斧・剣・シャベル, かまど, バケツ, 火打石と打ち金, 盾, ブレイズパウダー, エンダーアイ, パン, 鉄装備, ベッド）。1回10tick＋腕振り
+- smelt: かまどを置き、燃料（石炭/木炭/板材/原木）で1個200tick。かまどの前で待つ
+- 失敗は result「できない: 材料不足 鉄インゴット×2」の形
+
+## W2 速い動きと戦い（skill/ の Nav, Motion, FollowSkill, GotoSkill, ExploreSkill, AttackSkill, Combat, BridgeSkill, PillarSkill, BarterSkill, DragonSkill, MotionSkills ＋ FakeMember の属性定義ブロックだけ）
+```java
+final class Combat { static void tick(FakeMember o); }   // SkillRunner.tick が毎tick呼ぶ反射。必要な時だけ今のスキルを一時停止して戦う
+public final class MotionSkills { static Skill create(...); static void specs(JsonArray out); }
+```
+- 移動: 3ブロック以上はダッシュ（setSprinting）、平地のダッシュ中は約11tickごとにジャンプ（ダッシュジャンプ）。直線の平地でダッシュ約5.6ブロック/秒、ダッシュジャンプ約7ブロック/秒になるよう MOVEMENT_SPEED と speedModifier を調整
+- 迷わない: 経路の再計算は1秒に1回まで。5秒詰まったら 掘って進む→柱→橋 の順。溶岩は避ける。5ブロック以上落ちそうで水バケツがあれば水で着地
+- 戦い: 一番強い武器に持ち替え、攻撃は0.6秒間隔（プレイヤーのクールダウン）、ジャンプ攻撃でクリティカル、盾があればスケルトン/クリーパーに構える、横に動いてよける、体力8以下で下がって食べる
+- スキル名: `goto` `follow_player` `explore` `attack{target}` `hunt{target: cow|pig|sheep|chicken|enderman|blaze}` `bridge{direction,length}` `pillar{height}` `barter{gold}`（金インゴットをピグリンに投げて落ちた物を拾う）`fight_dragon`（クリスタルを壊す→止まり木の竜を殴る→息をよける。倒したら event「エンドラ倒した」）
+
+## W3 自動進行と早送り（run/**, skill/SkillRunner.java, skill/Tools.java, skill/PortalSkill.java, skill/StructureSkill.java, skill/RunSkills.java, entity/FakeMember の tick 呼び出しと保存/読込の数行, command/AiBuddyCommands の run サブコマンド）
+```java
+public final class Autopilot {          // FakeMember が1つ持つ（FakeMember.autopilot()）
+  public void tick();                   // 毎tick。暇なら2秒以内に次の行動を SkillRunner に出す
+  public void pause(int ticks, String why); public void resume();
+  public boolean isEnabled(); public void setEnabled(boolean on);
+  public String stageName(); public String goalText();   // 「ブレイズロッド集め（4/7）」
+  public boolean isFastForwarding();
+  public net.minecraft.nbt.CompoundTag save(); public void load(net.minecraft.nbt.CompoundTag t);
+}
+```
+- 段階: 木→石の道具→鉄（バケツ・盾・火打石）→食料→ネザーゲート（溶岩だまりに水バケツで黒曜石を作って枠を組む。廃ポータルがあれば使う）→ネザー要塞でブレイズロッド7→ピグリン交換かエンダーマンでパール12→アイ作成→アイを投げて要塞へ（EyeOfEnder を実際に飛ばす）→エンドポータルにアイをはめる→エンドラ→完了
+- 各段階の終わりに postEvent（「石ツール揃った」「ゲート作った 座標 x y z」など）
+- SkillRunner: SurvivalSkills / MotionSkills / RunSkills を順に create する形に変え、`lastResult()` を public に。toolSpecs は脳用の少数（say 以外: follow_player, stop_follow, resume_run）だけ返す
+- 早送り: 段階ごとの標準時間（合計約12分）で進め、終わったら手に入るはずの物を持ち物に足し、次の場所（要塞・ネザー要塞など）へテレポート・次元移動。人が近づいたら即やめる
+- コマンド: `/aibuddy run on|off|status|skipto <stage>`。召喚直後は on
+
+## W4 脳（brain/**）
+- 脳は「喋り役」。ゲームの進行は Autopilot 任せ。「次どうする？」と聞かない。指示待ちしない
+- 声もチャットも聞こえている前提を共通指示に明記。入力のチャット行に (声)/(チャット) を付ける
+- 呼ぶタイミング: 出来事・チャット・声のときだけ＋暇つぶしの独り言は45秒に1回まで。返事済みのチャットは次から送らない（直近6件まで）
+- プロンプトキャッシュ: system と tools に cache_control（ephemeral）。usage の cache_read をログに残す
+- ツール: say / wait / follow_player（Autopilot を60秒止めてついていく）/ resume_run
+- prompt_common.txt が旧既定文のままなら新既定文で上書き（ユーザーが書き換えていたら残す）
+
+## W5 自動テスト（src/gametest/**, build.gradle の gametest 設定, .github/workflows/gametest.yml）
+- サーバー gametest: (1) 召喚直後の持ち物が空 (2) 素手で石を掘ると時間がかかりドロップ無し、木のツルハシなら丸石 (3) 平らな40ブロックの直線でダッシュ速度が 5〜7.5 ブロック/秒 (4) 原木4→作業台・木のツルハシを作れる

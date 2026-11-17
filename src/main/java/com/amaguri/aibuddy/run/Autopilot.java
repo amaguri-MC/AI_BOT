@@ -1,0 +1,481 @@
+package com.amaguri.aibuddy.run;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.amaguri.aibuddy.entity.FakeMember;
+import com.amaguri.aibuddy.skill.RunSkills;
+import com.amaguri.aibuddy.skill.SkillRunner;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+
+/**
+ * 自動進行。行動を決めるのはここで、脳（AI）は喋るのとたまの割り込み（ついていく等）だけ。脳を待って止まらない。
+ * 毎tick:
+ *  1. 見られているか（同じ次元で64ブロック内にプレイヤー。スペクテイターも「見ている」）を数え、20秒見られていなければ早送り（FastForward）。
+ *  2. 段階（Stage）が終わっていれば postEvent して次へ。
+ *  3. 手が空いて0.5秒たったら Plan の表から次の行動を SkillRunner に出す（どの段階でも2秒以内）。
+ *  4. 動いているスキルが表の制限時間を超えたら打ち切って次の行へ（迷い続けない）。
+ */
+public final class Autopilot {
+	static final Logger LOGGER = LoggerFactory.getLogger("aibuddy-run");
+
+	static final double WATCH_RANGE = 64.0;
+	static final int UNWATCHED_TO_FF = 20 * 20;
+	private static final int IDLE_TO_ACT = 10;
+	private static final int MIN_TIMEOUT = 20 * 30;
+
+	private final FakeMember o;
+	final FastForward ff;
+
+	private boolean enabled = true;
+	private Stage stage = Stage.WOOD;
+	private int pauseTicks;
+	private String pauseWhy = "";
+	private int idle;
+	private int unwatched;
+	private boolean ownSkill;
+	private Plan.Row lastRow;
+	private int rowTicks;
+	private long now;
+	private final Map<String, Integer> fails = new HashMap<>();
+	private final Map<String, Long> coolUntil = new HashMap<>();
+	private String lastDim = "";
+	private String lastAction = "";
+
+	// 進行の記憶（保存する）
+	private int eyesNeeded = 12;
+	private int gravelTries;
+	private int foodFails;
+	private boolean ruinChecked;
+	private boolean ruinLooted;
+	private boolean dragonKilled;
+
+	public Autopilot(FakeMember owner) {
+		this.o = owner;
+		this.ff = new FastForward(owner, this);
+	}
+
+	// ================= 公開API（CONTRACT） =================
+
+	public void tick() {
+		if (!(o.level() instanceof ServerLevel sl) || o.isRemoved()) {
+			return;
+		}
+		now++;
+		if (!enabled || o.isPuddle()) {
+			if (ff.active()) {
+				ff.stop(false);
+			}
+			return;
+		}
+		if (now % 100 == 1 && stage != Stage.DONE) {
+			keepLoaded(sl, o.blockPosition());
+		}
+		trackDimension(sl);
+		boolean watched = isWatched(sl);
+		unwatched = watched ? 0 : unwatched + 1;
+		if (ff.active()) {
+			if (watched) {
+				ff.stop(true);
+			} else {
+				ff.tick();
+			}
+			return;
+		}
+		if (pauseTicks > 0) {
+			pauseTicks--;
+			return;
+		}
+		if (unwatched >= UNWATCHED_TO_FF && stage != Stage.DONE) {
+			ff.start();
+			return;
+		}
+		SkillRunner r = o.skills();
+		Ctx c = new Ctx(o, this);
+		if (now % 20 == 0 || !r.isBusy()) {
+			if (advance(c) && ownSkill && r.isBusy()) {
+				// 段階が終わったのに前の段階の行動を続けない
+				r.stop();
+				ownSkill = false;
+			}
+		}
+		if (r.isBusy()) {
+			idle = 0;
+			if (ownSkill && lastRow != null && ++rowTicks > Math.max(MIN_TIMEOUT, lastRow.timeout())) {
+				LOGGER.info("[run] {} timeout: {}", o.getDisplayNameText(), lastRow.key());
+				r.stop();
+				fail(lastRow.key());
+				ownSkill = false;
+			}
+			return;
+		}
+		if (ownSkill) {
+			ownSkill = false;
+			afterSkill(c, r.lastResult());
+		}
+		if (++idle >= IDLE_TO_ACT) {
+			decide(c);
+		}
+	}
+
+	public void pause(int ticks, String why) {
+		pauseTicks = Math.max(pauseTicks, Math.max(0, ticks));
+		pauseWhy = why == null ? "" : why;
+		if (ff.active()) {
+			ff.stop(true);
+		}
+		ownSkill = false;
+	}
+
+	public void resume() {
+		pauseTicks = 0;
+		pauseWhy = "";
+		idle = IDLE_TO_ACT;
+	}
+
+	public boolean isEnabled() {
+		return enabled;
+	}
+
+	public void setEnabled(boolean on) {
+		if (enabled && !on) {
+			if (ff.active()) {
+				ff.stop(false);
+			}
+			if (ownSkill) {
+				o.skills().stop();
+				ownSkill = false;
+			}
+		}
+		enabled = on;
+		idle = IDLE_TO_ACT;
+	}
+
+	public String stageName() {
+		return stage.label;
+	}
+
+	/** 「ブレイズロッド集め（4/7）」のような今の目標。 */
+	public String goalText() {
+		if (!(o.level() instanceof ServerLevel)) {
+			return stage.label;
+		}
+		String p = Plan.progress(stage, new Ctx(o, this));
+		String base = stage.label + (p.isEmpty() ? "" : "（" + p + "）");
+		if (!enabled) {
+			return base + " ※自動進行オフ";
+		}
+		if (ff.active()) {
+			return base + " ※早送り中";
+		}
+		if (pauseTicks > 0) {
+			return base + " ※一時停止中（" + pauseWhy + "）";
+		}
+		return base;
+	}
+
+	public boolean isFastForwarding() {
+		return ff.active();
+	}
+
+	public CompoundTag save() {
+		CompoundTag t = new CompoundTag();
+		t.putBoolean("Enabled", enabled);
+		t.putString("Stage", stage.id);
+		t.putInt("Pause", pauseTicks);
+		t.putString("PauseWhy", pauseWhy);
+		t.putInt("EyesNeeded", eyesNeeded);
+		t.putInt("GravelTries", gravelTries);
+		t.putInt("FoodFails", foodFails);
+		t.putBoolean("RuinChecked", ruinChecked);
+		t.putBoolean("RuinLooted", ruinLooted);
+		t.putBoolean("DragonKilled", dragonKilled);
+		t.putString("LastDim", lastDim);
+		t.putInt("Unwatched", unwatched);
+		ff.save(t);
+		CompoundTag m = new CompoundTag();
+		for (Map.Entry<String, BlockPos> e : o.skills().marks().entrySet()) {
+			m.putLong(e.getKey(), e.getValue().asLong());
+		}
+		t.put("Marks", m);
+		return t;
+	}
+
+	public void load(CompoundTag t) {
+		if (t == null) {
+			return;
+		}
+		enabled = t.getBooleanOr("Enabled", true);
+		Stage s = Stage.byId(t.getStringOr("Stage", "wood"));
+		stage = s == null ? Stage.WOOD : s;
+		pauseTicks = t.getIntOr("Pause", 0);
+		pauseWhy = t.getStringOr("PauseWhy", "");
+		eyesNeeded = t.getIntOr("EyesNeeded", 12);
+		gravelTries = t.getIntOr("GravelTries", 0);
+		foodFails = t.getIntOr("FoodFails", 0);
+		ruinChecked = t.getBooleanOr("RuinChecked", false);
+		ruinLooted = t.getBooleanOr("RuinLooted", false);
+		dragonKilled = t.getBooleanOr("DragonKilled", false);
+		lastDim = t.getStringOr("LastDim", "");
+		unwatched = t.getIntOr("Unwatched", 0);
+		ff.load(t);
+		CompoundTag m = t.getCompound("Marks").orElse(null);
+		if (m != null) {
+			for (String k : m.keySet()) {
+				o.skills().setMark(k, BlockPos.of(m.getLongOr(k, 0L)));
+			}
+		}
+	}
+
+	// ================= そのほか公開（コマンド・他担当用） =================
+
+	public Stage stage() {
+		return stage;
+	}
+
+	/** /aibuddy run skipto: 前の段階で手に入るはずの物を持たせて、その段階から始める。 */
+	public void skipTo(Stage target) {
+		if (ff.active()) {
+			ff.stop(false);
+		}
+		o.skills().stop();
+		ownSkill = false;
+		for (Stage s : Stage.values()) {
+			if (s.ordinal() >= target.ordinal()) {
+				break;
+			}
+			ff.grant(s, 1.0);
+		}
+		setStage(target, "skipto");
+	}
+
+	/** 状態の1行説明（/aibuddy run status 用）。 */
+	public String statusLine() {
+		return o.getDisplayNameText() + ": " + goalText() + " / " + o.skills().status()
+				+ (lastAction.isEmpty() ? "" : " / 直前の判断: " + lastAction)
+				+ (ff.active() ? " / 早送り " + ff.progressText() : "");
+	}
+
+	// ================= 内部 =================
+
+	int eyesNeeded() {
+		return eyesNeeded;
+	}
+
+	boolean flintGaveUp() {
+		return gravelTries >= 4;
+	}
+
+	boolean foodGaveUp() {
+		return foodFails >= 3;
+	}
+
+	boolean ruinChecked() {
+		return ruinChecked;
+	}
+
+	void setRuinChecked() {
+		ruinChecked = true;
+	}
+
+	boolean ruinLooted() {
+		return ruinLooted;
+	}
+
+	void setRuinLooted() {
+		ruinLooted = true;
+	}
+
+	boolean dragonKilled() {
+		return dragonKilled;
+	}
+
+	void setDragonKilled() {
+		dragonKilled = true;
+	}
+
+	int unwatchedTicks() {
+		return unwatched;
+	}
+
+	void resetUnwatched() {
+		unwatched = 0;
+	}
+
+	void setStage(Stage s, String why) {
+		if (s != stage) {
+			LOGGER.info("[run] {} stage {} -> {} ({})", o.getDisplayNameText(), stage.id, s.id, why);
+		}
+		stage = s;
+		fails.clear();
+		coolUntil.clear();
+		idle = IDLE_TO_ACT;
+	}
+
+	/** 段階が終わっていれば postEvent して次へ（いくつでも）。進んだら true。 */
+	boolean advance(Ctx c) {
+		boolean moved = false;
+		if (stage == Stage.DRAGON && !dragonKilled && c.end()) {
+			var fight = c.l.getDragonFight();
+			if (fight != null && fight.hasPreviouslyKilledDragon() && c.l.getDragons().isEmpty()) {
+				dragonKilled = true;
+			}
+		}
+		for (int guard = 0; guard < Stage.values().length && stage != Stage.DONE && Plan.done(stage, c); guard++) {
+			String ev = Plan.doneEvent(stage, c);
+			if (!ev.isEmpty()) {
+				o.postEvent(ev);
+			}
+			setStage(stage.next(), "done");
+			moved = true;
+		}
+		return moved;
+	}
+
+	private void decide(Ctx c) {
+		SkillRunner r = o.skills();
+		List<Plan.Row> rows = Plan.rows(stage);
+		for (Plan.Row row : rows) {
+			Long until = coolUntil.get(row.key());
+			if (until != null && until > now) {
+				continue;
+			}
+			boolean hit;
+			try {
+				hit = row.when().test(c);
+			} catch (RuntimeException e) {
+				LOGGER.warn("[run] row {} test failed", row.key(), e);
+				continue;
+			}
+			if (!hit) {
+				continue;
+			}
+			if (row.tool().startsWith("#jump:")) {
+				Stage to = Stage.byId(row.tool().substring(6));
+				if (to != null && to != stage) {
+					lastAction = row.why();
+					setStage(to, row.why());
+					return;
+				}
+				continue;
+			}
+			String res;
+			try {
+				res = r.startAuto(row.tool(), row.in() == null ? new com.google.gson.JsonObject() : row.in().apply(c));
+			} catch (RuntimeException e) {
+				res = "できない: " + e.getMessage();
+			}
+			if (res.startsWith("開始")) {
+				ownSkill = true;
+				lastRow = row;
+				rowTicks = 0;
+				idle = 0;
+				lastAction = row.why();
+				return;
+			}
+			LOGGER.debug("[run] {} {} -> {}", o.getDisplayNameText(), row.key(), res);
+			fail(row.key());
+		}
+		// 全部だめ: 少し間を置いて（idle を戻して）また見る。探検も失敗する所なら跳ねて待つ
+		idle = IDLE_TO_ACT - 20;
+		r.startAuto("emote", Plan.j("kind", "jump"));
+	}
+
+	private void afterSkill(Ctx c, String res) {
+		if (lastRow == null) {
+			return;
+		}
+		String key = lastRow.key();
+		if (isFailure(res)) {
+			fail(key);
+			if (key.equals("hunt") && stage == Stage.FOOD) {
+				foodFails++;
+			}
+			if (key.equals("fill") && res.contains("あと")) {
+				// 額縁にはめるアイが足りない → パール集めに戻る
+				int more = parseInt(res.substring(res.indexOf("あと") + 2));
+				eyesNeeded = c.eyes() + Math.max(1, more);
+				setStage(Stage.PEARLS, "アイ不足");
+			}
+		} else {
+			fails.remove(key);
+			coolUntil.remove(key);
+		}
+		if (key.equals("gravel") && !c.has(Items.FLINT)) {
+			gravelTries++;
+		}
+		if (key.equals("dragon") && res.contains("倒した")) {
+			dragonKilled = true;
+		}
+	}
+
+	static boolean isFailure(String res) {
+		return res == null || res.isEmpty() || res.contains("できない") || res.contains("失敗") || res.contains("見つから")
+				|| res.contains("たどり着けな") || res.contains("切り上げ") || res.contains("いなくなった") || res.contains("止めた")
+				|| res.contains("疲れた") || res.contains("近づけない");
+	}
+
+	private static int parseInt(String s) {
+		int n = 0;
+		for (char ch : s.toCharArray()) {
+			if (ch >= '0' && ch <= '9') {
+				n = n * 10 + (ch - '0');
+			} else if (n > 0) {
+				break;
+			}
+		}
+		return n;
+	}
+
+	private void fail(String key) {
+		int n = fails.merge(key, 1, Integer::sum);
+		coolUntil.put(key, now + Math.min(20L * 60, 100L * n));
+	}
+
+	/** 同じ次元で64ブロック内にプレイヤー（スペクテイターも含む）がいれば「見られている」。 */
+	boolean isWatched(ServerLevel sl) {
+		for (ServerPlayer p : sl.getServer().getPlayerList().getPlayers()) {
+			if (p.level() == sl && p.distanceToSqr(o) <= WATCH_RANGE * WATCH_RANGE) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** 次元が変わったら、くぐったゲートの場所を覚える（帰り道）。 */
+	private void trackDimension(ServerLevel sl) {
+		String d = sl.dimension().identifier().toString();
+		if (lastDim.equals(d)) {
+			return;
+		}
+		String prev = lastDim;
+		lastDim = d;
+		if (prev.isEmpty()) {
+			return;
+		}
+		if (sl.dimension().equals(Level.NETHER)) {
+			o.skills().setMark(RunSkills.MARK_PORTAL_NETHER, o.blockPosition());
+		} else if (sl.dimension().equals(Level.OVERWORLD) && prev.endsWith("the_nether")) {
+			o.skills().setMark(RunSkills.MARK_PORTAL_OW, o.blockPosition());
+		}
+		idle = IDLE_TO_ACT;
+	}
+
+	/** 誰も近くにいなくても自分のいるチャンクを動かし続ける（早送り・進行が止まらないように）。 */
+	static void keepLoaded(ServerLevel sl, BlockPos p) {
+		// UNVERIFIED: TicketType.PORTAL は約300tickで切れ、読み込み＋シミュレーション＋次元を起こしておく（半径3でエンティティも動く）
+		sl.getChunkSource().addTicketWithRadius(TicketType.PORTAL, ChunkPos.containing(p), 3);
+	}
+}

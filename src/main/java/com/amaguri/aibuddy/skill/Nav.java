@@ -8,21 +8,23 @@ import com.amaguri.aibuddy.entity.FakeMember;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * 経路移動。owner.getNavigation() に数十ブロックずつ区切って渡す。
- * 5秒進まなければ 回り込み → 掘る / 足場（ピラー）を置く の順で打開する。
+ * 3ブロック以上はダッシュ、平らな直線ではダッシュジャンプ（Motion.Dasher）。
+ * 経路の再計算は最短でも1秒（20tick）に1回。
+ * 5秒進まなければ 掘って進む → 柱 → 橋 → 回り込み の順で打開する。溶岩は避ける。
  */
 final class Nav {
-	private enum Mode { NORMAL, DETOUR, DIG, PILLAR }
+	private enum Mode { NORMAL, DETOUR, DIG, PILLAR, BRIDGE }
+
+	/** これ以上離れていればダッシュ（ブロック） */
+	static final double DASH_DISTANCE = 3.0;
+	static final int REPATH_MIN_TICKS = 20;
 
 
 	private final FakeMember o;
@@ -36,7 +38,6 @@ final class Nav {
 
 	private Mode mode = Mode.NORMAL;
 	private int modeTicks;
-	private int repath;
 	private int checkTimer;
 	private int noProgress;
 	private int stage;
@@ -46,6 +47,9 @@ final class Nav {
 	private boolean pathFailed;
 	private boolean failed;
 	private boolean detourSign;
+	private final Motion.Dasher dasher;
+	private int sinceRepath = REPATH_MIN_TICKS;
+	private Vec3 pathTarget;
 
 	// DIG
 	private final List<BlockPos> digQueue = new ArrayList<>();
@@ -54,13 +58,17 @@ final class Nav {
 	private int digSteps;
 
 	// PILLAR
-	private BlockPos pillarCell;
+	private final Motion.Pillar pillar = new Motion.Pillar();
 	private int pillars;
+
+	// BRIDGE
+	private int bridged;
 
 
 	Nav(FakeMember o, Digger digger) {
 		this.o = o;
 		this.digger = digger;
+		this.dasher = new Motion.Dasher(o);
 	}
 
 	void go(Vec3 g, double reach, double speed) {
@@ -70,7 +78,7 @@ final class Nav {
 			noProgress = 0;
 			failed = false;
 			mode = Mode.NORMAL;
-			repath = 0;
+			pathTarget = null;
 		}
 		this.goal = g;
 		this.reach = reach;
@@ -87,11 +95,14 @@ final class Nav {
 
 	void stop() {
 		goal = null;
+		failed = false;
+		rescues = 0;
 		mode = Mode.NORMAL;
 		digQueue.clear();
 		digger.cancel();
 		o.getNavigation().stop();
 		o.setSprinting(false);
+		dasher.reset();
 	}
 
 	boolean failed() {
@@ -127,11 +138,15 @@ final class Nav {
 			o.setSprinting(false);
 			return;
 		}
+		if (o.isInWater() || o.isInLava()) {
+			o.getJumpControl().jump(); // 泳いで上がる
+		}
 		switch (mode) {
 			case NORMAL -> tickNormal();
 			case DETOUR -> tickDetour();
 			case DIG -> tickDig();
 			case PILLAR -> tickPillar();
+			case BRIDGE -> tickBridge();
 		}
 	}
 
@@ -152,14 +167,24 @@ final class Nav {
 	private void tickNormal() {
 		// UNVERIFIED: 固体ブロックを目標にした moveTo は部分経路になる想定（canReach=false でも歩く）。詰まれば rescue() が掘る。
 		PathNavigation nav = o.getNavigation();
-		repath--;
-		if (repath <= 0 || nav.isDone()) {
-			Vec3 t = segmentTarget();
-			boolean ok = nav.moveTo(t.x, t.y, t.z, speed);
+		sinceRepath++;
+		boolean dash = sprint || distance() >= DASH_DISTANCE;
+		double mod = Motion.speedMod(o, dash, speed);
+		Vec3 seg = segmentTarget();
+		boolean moved = pathTarget == null || pathTarget.distanceToSqr(seg) > 16.0;
+		boolean wantNew = nav.isDone() || moved || sinceRepath >= 100;
+		if (wantNew && sinceRepath >= REPATH_MIN_TICKS) {
+			boolean ok = nav.moveTo(seg.x, seg.y, seg.z, mod);
 			pathFailed = !ok;
-			repath = 20;
+			pathTarget = seg;
+			sinceRepath = 0;
 		}
-		o.setSprinting(sprint || distance() > 14);
+		nav.setSpeedModifier(mod);
+		dasher.tick(dash);
+		if (o.tickCount % 3 == 0 && Motion.lavaBrake(o)) {
+			noProgress++;
+			sinceRepath = REPATH_MIN_TICKS;
+		}
 		if (++checkTimer < 20) {
 			return;
 		}
@@ -191,15 +216,13 @@ final class Nav {
 			o.getNavigation().stop();
 			return;
 		}
-		double dy = goal.y - o.getY();
-		boolean wantUp = dy >= 2.0 && SkillUtil.horiz(o.position(), goal) < 10;
-		int s = stage++;
-		if (s % 2 == 0) {
-			startDetour();
-		} else if (wantUp) {
-			startPillar();
-		} else {
-			startDig();
+		// 5秒詰まったら 掘って進む → 柱 → 橋 → 回り込み の順
+		int s = stage++ % 4;
+		switch (s) {
+			case 0 -> startDig();
+			case 1 -> startPillar();
+			case 2 -> startBridge();
+			default -> startDetour();
 		}
 	}
 
@@ -229,8 +252,9 @@ final class Nav {
 	}
 
 	private void backToNormal() {
+		o.setShiftKeyDown(false);
 		mode = Mode.NORMAL;
-		repath = 0;
+		sinceRepath = REPATH_MIN_TICKS;
 		lastCheck = null;
 		checkTimer = 0;
 		noProgress = 0;
@@ -337,61 +361,70 @@ final class Nav {
 		mode = Mode.PILLAR;
 		modeTicks = 0;
 		pillars = 0;
-		pillarCell = null;
+		pillar.reset();
+		if (!Motion.hasScaffold(o)) {
+			backToNormal();
+		}
 	}
 
 	private void tickPillar() {
-		ServerLevel l = SkillUtil.level(o);
 		if (++modeTicks > 240) {
 			backToNormal();
 			return;
 		}
-		SkillUtil.lookAt(o, o.position().add(0, -1, 0));
-		if (o.onGround()) {
-			if (pillarCell != null) {
-				pillars++;
-				pillarCell = null;
-				if (goal.y - o.getY() < 1.5 || pillars >= 12 || pathExists()) {
-					backToNormal();
-					return;
-				}
+		int r = pillar.tick(o, digger);
+		if (r == Motion.PILLAR_NO_BLOCK || r == Motion.PILLAR_BLOCKED) {
+			backToNormal();
+		} else if (r == Motion.PILLAR_STEP) {
+			pillars++;
+			if (goal.y - o.getY() < 1.5 || pillars >= 12 || pathExists()) {
+				backToNormal();
 			}
-			BlockPos head2 = o.blockPosition().above(2);
-			if (l.getBlockState(head2).blocksMotion()) {
-				if (!digger.active()) {
-					if (!digger.begin(head2)) {
-						backToNormal();
-						return;
-					}
-				}
-				digger.tick();
-				return;
-			}
-			pillarCell = o.blockPosition();
-			o.getJumpControl().jump();
-		} else if (pillarCell != null && o.getY() >= pillarCell.getY() + 1.0
-				&& !l.getBlockState(pillarCell).blocksMotion()) {
-			placeScaffold(pillarCell);
 		}
 	}
 
-	private void placeScaffold(BlockPos p) {
-		ServerLevel l = SkillUtil.level(o);
-		net.minecraft.world.item.Item[] mats = { Items.COBBLESTONE, Items.DIRT, Items.NETHERRACK, Items.STONE,
-				Items.COBBLED_DEEPSLATE };
-		BlockState state = Blocks.COBBLESTONE.defaultBlockState();
-		for (net.minecraft.world.item.Item m : mats) {
-			if (o.getInventory().countItem(m) > 0) {
-				ItemStack taken = o.getInventory().removeItemType(m, 1);
-				if (!taken.isEmpty() && taken.getItem() instanceof net.minecraft.world.item.BlockItem bi) {
-					state = bi.getBlock().defaultBlockState();
-				}
-				break;
-			}
+	// ---- BRIDGE ----
+
+	private void startBridge() {
+		mode = Mode.BRIDGE;
+		modeTicks = 0;
+		bridged = 0;
+		if (!Motion.hasScaffold(o)) {
+			backToNormal();
 		}
-		// 手持ちが無くても足場は置く（演出優先）
-		l.setBlock(p, state, 3);
-		l.playSound(null, p, state.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 0.8f, 1.0f);
-		SkillUtil.swing(o);
+	}
+
+	/** 床が無い所に1個ずつ置いて渡る（置いてから進むので落ちない）。 */
+	private void tickBridge() {
+		if (++modeTicks > 400 || bridged >= 24) {
+			backToNormal();
+			return;
+		}
+		ServerLevel l = SkillUtil.level(o);
+		Direction d = SkillUtil.horizontalToward(o.position(), goal);
+		BlockPos feetFloor = o.blockPosition().below();
+		BlockPos nextFloor = feetFloor.relative(d);
+		o.setShiftKeyDown(true);
+		SkillUtil.lookAt(o, Vec3.atCenterOf(nextFloor));
+		if (l.getBlockState(nextFloor.above()).blocksMotion() || l.getBlockState(nextFloor.above(2)).blocksMotion()) {
+			o.setShiftKeyDown(false);
+			backToNormal(); // 壁: 次は別の手段
+			return;
+		}
+		if (!l.getBlockState(nextFloor).blocksMotion()) {
+			if (!Motion.placeScaffold(o, nextFloor)) {
+				o.setShiftKeyDown(false);
+				backToNormal();
+			} else {
+				bridged++;
+			}
+			return;
+		}
+		Vec3 c = Vec3.atBottomCenterOf(nextFloor.above());
+		o.getMoveControl().setWantedPosition(c.x, c.y, c.z, Motion.speedMod(o, false, 1.0));
+		if (modeTicks % 10 == 0 && pathExists()) {
+			o.setShiftKeyDown(false);
+			backToNormal();
+		}
 	}
 }

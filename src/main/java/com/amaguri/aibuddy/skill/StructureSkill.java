@@ -19,6 +19,7 @@ import net.minecraft.world.phys.Vec3;
  * 構造物の場所を ServerLevel / ChunkGenerator の検索で得て、そこへ歩き続ける。着いたら postEvent。
  * stronghold / village は ServerLevel#findNearestMapStructure(TagKey,...)、
  * fortress / bastion は ChunkGenerator#findNearestMapStructure(ServerLevel, HolderSet,...)。
+ * 見つけた場所は SkillRunner の mark（キーは type 名）に覚え、Autopilot が使う。
  */
 final class StructureSkill extends Skill {
 	private final String type;
@@ -45,6 +46,14 @@ final class StructureSkill extends Skill {
 				}
 				// UNVERIFIED: 第3引数は検索半径（チャンク単位。/locate と同じ 100）、第4引数は既知を飛ばすか
 				found = l.findNearestMapStructure(StructureTags.EYE_OF_ENDER_LOCATED, from, 100, false);
+			}
+			case "ruined_portal" -> {
+				label = "廃ポータル";
+				if (!l.dimension().equals(Level.OVERWORLD)) {
+					return "できない: 廃ポータルはオーバーワールドで探す";
+				}
+				// 近く（8チャンク内）だけ。遠い廃ポータルに寄り道はしない
+				found = l.findNearestMapStructure(StructureTags.RUINED_PORTAL, from, 8, false);
 			}
 			case "village" -> {
 				label = "村";
@@ -74,6 +83,7 @@ final class StructureSkill extends Skill {
 		if (found == null) {
 			return "できない: " + label + "が見つからない";
 		}
+		runner.setMark(type, found);
 		goal = SkillUtil.snap(o, found.getX() + 0.5, found.getZ() + 0.5, o.getY());
 		nav.go(goal, 10.0, 1.0);
 		nav.setVertTol(256);

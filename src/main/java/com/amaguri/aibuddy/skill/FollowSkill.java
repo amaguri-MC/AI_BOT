@@ -10,6 +10,7 @@ final class FollowSkill extends Skill {
 	private final String name;
 	private ServerPlayer target;
 	private int lostTicks;
+	private int failures;
 
 	FollowSkill(FakeMember o, SkillRunner r, String name) {
 		super(o, r);
@@ -38,8 +39,8 @@ final class FollowSkill extends Skill {
 		double d = Math.sqrt(target.distanceToSqr(o));
 		Vec3 tp = target.position();
 		if (d > 3.5) {
-			nav.setSprint(d > 10);
-			nav.go(tp, 2.5, d > 10 ? 1.3 : 1.0);
+			// 3ブロック以上離れたらダッシュ（Nav が距離で切り替える）
+			nav.go(tp, 2.5, 1.0);
 			nav.tick();
 		} else {
 			nav.stop();
@@ -48,7 +49,11 @@ final class FollowSkill extends Skill {
 			}
 		}
 		if (nav.failed()) {
-			finish("追いつけない: " + name, name + "に追いつけない");
+			// 指示待ちで止まらない: 少し待って経路を引き直す。5回続けて駄目なら諦める
+			nav.stop();
+			if (++failures >= 5) {
+				finish("追いつけない: " + name, name + "に追いつけない");
+			}
 		}
 	}
 

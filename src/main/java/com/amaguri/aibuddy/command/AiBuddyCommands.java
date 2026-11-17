@@ -23,8 +23,9 @@ import com.amaguri.aibuddy.brain.BrainManager;
 import com.amaguri.aibuddy.brain.Persona;
 import com.amaguri.aibuddy.entity.FakeMember;
 import com.amaguri.aibuddy.entity.ModEntities;
+import com.amaguri.aibuddy.run.Stage;
 
-/** /aibuddy spawn|remove|melt|freeze|reload （OP2）。 */
+/** /aibuddy spawn|remove|melt|freeze|reload|run （OP2）。 */
 public final class AiBuddyCommands {
 	private AiBuddyCommands() {
 	}
@@ -49,7 +50,20 @@ public final class AiBuddyCommands {
 						.then(Commands.argument("enabled", BoolArgumentType.bool())
 								.executes(ctx -> freeze(ctx, BoolArgumentType.getBool(ctx, "enabled")))))
 				.then(Commands.literal("reload")
-						.executes(AiBuddyCommands::reload)));
+						.executes(AiBuddyCommands::reload))
+				.then(Commands.literal("run")
+						.then(Commands.literal("on").executes(ctx -> runEnable(ctx, true)))
+						.then(Commands.literal("off").executes(ctx -> runEnable(ctx, false)))
+						.then(Commands.literal("status").executes(AiBuddyCommands::runStatus))
+						.then(Commands.literal("skipto")
+								.then(Commands.argument("stage", StringArgumentType.word())
+										.suggests((ctx, b) -> {
+											for (Stage st : Stage.values()) {
+												b.suggest(st.id);
+											}
+											return b.buildFuture();
+										})
+										.executes(ctx -> runSkip(ctx, StringArgumentType.getString(ctx, "stage")))))));
 	}
 
 	private static int spawn(CommandContext<CommandSourceStack> ctx, String personaId) {
@@ -128,6 +142,50 @@ public final class AiBuddyCommands {
 		ctx.getSource().sendSuccess(() -> Component.translatableWithFallback("commands.aibuddy.reload.success",
 				"設定を再読込した"), true);
 		return 1;
+	}
+
+	// ---- /aibuddy run （W3: 自動進行） ----
+
+	private static int runEnable(CommandContext<CommandSourceStack> ctx, boolean on) {
+		List<FakeMember> members = allMembers(ctx.getSource().getServer());
+		for (FakeMember m : members) {
+			m.autopilot().setEnabled(on);
+		}
+		final int n = members.size();
+		ctx.getSource().sendSuccess(() -> Component.translatableWithFallback(
+				on ? "commands.aibuddy.run.on" : "commands.aibuddy.run.off",
+				on ? "自動進行をオンにした（%s人）" : "自動進行をオフにした（%s人）", n), true);
+		return n;
+	}
+
+	private static int runStatus(CommandContext<CommandSourceStack> ctx) {
+		List<FakeMember> members = allMembers(ctx.getSource().getServer());
+		if (members.isEmpty()) {
+			ctx.getSource().sendFailure(Component.translatableWithFallback("commands.aibuddy.run.none", "メンバーがいない"));
+			return 0;
+		}
+		for (FakeMember m : members) {
+			String line = m.autopilot().statusLine();
+			ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+		}
+		return members.size();
+	}
+
+	private static int runSkip(CommandContext<CommandSourceStack> ctx, String id) {
+		Stage st = Stage.byId(id);
+		if (st == null) {
+			ctx.getSource().sendFailure(Component.translatableWithFallback("commands.aibuddy.run.unknown_stage",
+					"知らない段階: %s", id));
+			return 0;
+		}
+		List<FakeMember> members = allMembers(ctx.getSource().getServer());
+		for (FakeMember m : members) {
+			m.autopilot().skipTo(st);
+		}
+		final int n = members.size();
+		ctx.getSource().sendSuccess(() -> Component.translatableWithFallback("commands.aibuddy.run.skipto",
+				"「%s」から始める（%s人）", st.label, n), true);
+		return n;
 	}
 
 	private static List<FakeMember> allMembers(MinecraftServer server) {

@@ -1,6 +1,8 @@
 package com.amaguri.aibuddy.skill;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +12,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -18,7 +21,10 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
-/** 脳が選んだ行動（ツール）を実行する手足。 */
+/**
+ * 行動（スキル）を実行する手足。行動を決めるのは主に Autopilot（run パッケージ）で、脳はたまに割り込むだけ。
+ * スキルは SurvivalSkills → MotionSkills → RunSkills の順に名前から作る（知らない名前は null を返す決まり）。
+ */
 public final class SkillRunner {
 	private static final Logger LOGGER = LoggerFactory.getLogger("aibuddy-skill");
 
@@ -29,17 +35,63 @@ public final class SkillRunner {
 	private ItemStack savedHand;
 	private boolean handHeld;
 	int pickedUp;
+	/** 覚えておく場所（ゲート・要塞など）。Autopilot が保存/読込する。 */
+	private final Map<String, BlockPos> marks = new HashMap<>();
+	/** 脳から follow_player されたときに Autopilot を止める長さ（60秒） */
+	private static final int FOLLOW_PAUSE_TICKS = 20 * 60;
 
 	public SkillRunner(FakeMember owner) {
 		this.owner = owner;
 		this.reporter = new AutoReporter(owner);
 	}
 
+	/** 脳用のツール（say 以外）: follow_player / stop_follow / resume_run だけ。進行は Autopilot が決める。 */
 	public static JsonArray toolSpecs() {
 		return Tools.specs();
 	}
 
+	/**
+	 * 脳（ツール呼び出し）からの入口。follow_player / stop_follow / resume_run は Autopilot の止め・再開も行う。
+	 * follow_player の引数は {name} と {player} のどちらでも受ける。
+	 */
 	public synchronized String start(String tool, JsonObject input) {
+		if (input == null) {
+			input = new JsonObject();
+		}
+		if ("follow_player".equals(tool)) {
+			normalizeFollow(input);
+			String r = startAuto(tool, input);
+			if (r.startsWith("開始")) {
+				owner.autopilot().pause(FOLLOW_PAUSE_TICKS, "ついていく");
+			}
+			return r;
+		}
+		if ("stop_follow".equals(tool)) {
+			if (current != null && current.getClass().getSimpleName().startsWith("Follow")) {
+				stop();
+			}
+			owner.autopilot().resume();
+			return "ついていくのをやめた。自分の進行に戻る";
+		}
+		if ("resume_run".equals(tool)) {
+			owner.autopilot().setEnabled(true);
+			owner.autopilot().resume();
+			return "進行を再開した: " + owner.autopilot().goalText();
+		}
+		return startAuto(tool, input);
+	}
+
+	static void normalizeFollow(JsonObject in) {
+		if (!in.has("name") && in.has("player")) {
+			in.add("name", in.get("player"));
+		}
+		if (!in.has("player") && in.has("name")) {
+			in.add("player", in.get("name"));
+		}
+	}
+
+	/** Autopilot からの入口（脳用の割り込み処理をしない）。すぐ結果文を返す。 */
+	public synchronized String startAuto(String tool, JsonObject input) {
 		if (!(owner.level() instanceof ServerLevel)) {
 			return "できない: まだ世界にいない";
 		}
@@ -82,19 +134,17 @@ public final class SkillRunner {
 	}
 
 	private Skill create(String tool, JsonObject in) {
-		return switch (tool) {
-			case "follow_player" -> new FollowSkill(owner, this, str(in, "name"));
-			case "goto" -> new GotoSkill(owner, this, num(in, "x"), num(in, "y"), num(in, "z"));
-			case "explore" -> new ExploreSkill(owner, this, str(in, "direction"));
-			case "mine" -> new MineSkill(owner, this, str(in, "block"), in.has("count") ? (int) num(in, "count") : 5);
-			case "collect_items" -> new CollectSkill(owner, this);
-			case "attack" -> new AttackSkill(owner, this, str(in, "target"));
-			case "find_structure" -> new StructureSkill(owner, this, str(in, "type"));
-			case "build_nether_portal" -> new PortalSkill(owner, this);
-			case "eat" -> new EatSkill(owner, this);
-			case "emote" -> new EmoteSkill(owner, this, str(in, "kind"));
-			default -> null;
-		};
+		if ("follow_player".equals(tool)) {
+			normalizeFollow(in);
+		}
+		Skill s = SurvivalSkills.create(tool, owner, this, in);
+		if (s == null) {
+			s = MotionSkills.create(tool, owner, this, in);
+		}
+		if (s == null) {
+			s = RunSkills.create(tool, owner, this, in);
+		}
+		return s;
 	}
 
 	static String str(JsonObject in, String key) {
@@ -123,7 +173,14 @@ public final class SkillRunner {
 				}
 				return;
 			}
-			if (current != null) {
+			boolean fighting = false;
+			try {
+				Combat.tick(owner); // 反射の戦い（W2）。戦っている間は今のスキルを一時停止する
+				fighting = Combat.isFighting(owner);
+			} catch (RuntimeException e) {
+				LOGGER.warn("combat tick failed", e);
+			}
+			if (current != null && !fighting) {
 				current.tick();
 				if (current.finished) {
 					Skill s = current;
@@ -167,6 +224,34 @@ public final class SkillRunner {
 		releaseHand();
 	}
 
+	/** 直前に終わったスキルの結果文（「できない: ...」「ダイヤを3個掘った」など）。 */
+	public synchronized String lastResult() {
+		return lastResult;
+	}
+
+	/** 今のスキルの名前（クラス名。Autopilot の見張り用）。何もしていなければ空。 */
+	public synchronized String currentName() {
+		return current == null || current.finished ? "" : current.getClass().getSimpleName();
+	}
+
+	// ---- 覚えておく場所 ----
+
+	public synchronized BlockPos mark(String key) {
+		return marks.get(key);
+	}
+
+	public synchronized void setMark(String key, BlockPos p) {
+		if (p == null) {
+			marks.remove(key);
+		} else {
+			marks.put(key, p.immutable());
+		}
+	}
+
+	public synchronized Map<String, BlockPos> marks() {
+		return new HashMap<>(marks);
+	}
+
 	public synchronized boolean isBusy() {
 		return current != null && !current.finished;
 	}
@@ -184,10 +269,16 @@ public final class SkillRunner {
 
 	// ---- 手持ち（見た目だけ）----
 
-	/** 腕に持たせる（見た目用。持ち物には入れない）。終了時に元に戻す。 */
+	/**
+	 * 腕に持たせる（終了時に元に戻す）。持ち物に無い物は持たない（見た目だけの偽アイテムは出さない）。
+	 * 新しいスキルは Inv.equip で実物を持つこと。
+	 */
 	void hold(Item item) {
 		ItemStack now = owner.getMainHandItem();
 		if (!now.isEmpty() && now.is(item)) {
+			return;
+		}
+		if (owner.getInventory().countItem(item) <= 0) {
 			return;
 		}
 		if (!handHeld) {

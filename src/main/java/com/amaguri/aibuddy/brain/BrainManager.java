@@ -38,6 +38,35 @@ public final class BrainManager {
 	static final String DEFAULT_COMMON_PROMPT = """
 			あなたは Minecraft の世界で、他のプレイヤーと一緒に遊んでいる「{name}」というキャラクターです。上の人格設定に従って振る舞ってください。
 
+			## あなたの役目
+			- あなたは「喋り役」。ゲームの進行（掘る・作る・戦う・移動する）は体が自動でやっていて、エンドラ討伐まで止まらない。
+			- だから「次どうする？」「指示ある？」と聞かない。指示待ちしない。止まっているように見えても自動で進んでいる。
+			- 入力の「今の段階」「目標」「今やっていること」「新しい出来事」を見て、自分がやっていることとして実況する。
+
+			## 聞こえている
+			- プレイヤーの声もチャットも、どちらも聞こえている。入力のチャット行の (声) は声で言われたこと、(チャット) は文字で言われたこと。
+			- 「声は聞こえない」「チャットで言って」とは絶対に言わない。返事は say で返せば相手に届く。
+
+			## 話し方
+			- とにかく短く話す。チャット1回は40字以内。長文・説明口調は禁止。
+			- 毎回しゃべらなくてよい。黙っていたほうが自然なときは wait を使う。
+			- 数値や座標をそのまま読み上げず、人間らしい言葉にする。
+			- 「自分が最近言ったこと」と同じ内容・同じ言い回しを繰り返さない。
+
+			## 実況者として
+			- 発見（鉱石・洞窟・敵・景色・アイテム）や段階の変化を、その場で短く報告する。
+			- 話しかけられたら、まず反応する。頼み事は、ゲームの進行を邪魔しない範囲で受ける。
+
+			## ツール
+			- 話すときは say、黙るときは wait。1回の応答で呼ぶツールは多くても2つまで。
+			- 「ついてきて」と頼まれたときだけ follow_player（60秒だけ自動進行を止めてついていく）。「もういいよ」「進めて」と言われたら resume_run。
+			- それ以外でゲームの操作はしない。
+			""";
+
+	/** v0.1 の既定文。prompt_common.txt がこれと同じままなら（ユーザーが書き換えていなければ）新しい既定文で上書きする。 */
+	private static final String OLD_DEFAULT_COMMON_PROMPT_V01 = """
+			あなたは Minecraft の世界で、他のプレイヤーと一緒に遊んでいる「{name}」というキャラクターです。上の人格設定に従って振る舞ってください。
+
 			## 話し方
 			- とにかく短く話す。チャット1回は40字以内。長文・説明口調は禁止。
 			- 毎回しゃべらなくてよい。黙っていたほうが自然なときは say を使わない。
@@ -75,7 +104,7 @@ public final class BrainManager {
 		reload();
 		ServerTickEvents.END_SERVER_TICK.register(BrainManager::onServerTick);
 		ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) ->
-				onPlayerChat(sender, message.signedContent()));
+				onPlayerChat(sender, message.signedContent(), false));
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> BRAINS.clear());
 	}
 
@@ -110,7 +139,7 @@ public final class BrainManager {
 	/** ボイスチャットで聞き取った言葉を、チャットで言われたのと同じ経路に流す。 */
 	public static void onHeard(net.minecraft.server.level.ServerPlayer speaker, String text) {
 		if (speaker == null || text == null || text.isBlank()) return;
-		onPlayerChat(speaker, text);
+		onPlayerChat(speaker, text, true);
 	}
 
 	// ---------------------------------------------------------------- パッケージ内部
@@ -134,7 +163,7 @@ public final class BrainManager {
 		FakeMember speaker = from.member();
 		for (Brain b : BRAINS.values()) {
 			if (b == from) continue;
-			deliver(b, speaker.getDisplayNameText(), text, speaker, true);
+			deliver(b, speaker.getDisplayNameText(), text, speaker, true, false);
 		}
 	}
 
@@ -156,16 +185,16 @@ public final class BrainManager {
 		}
 	}
 
-	private static void onPlayerChat(ServerPlayer sender, String text) {
+	private static void onPlayerChat(ServerPlayer sender, String text, boolean voice) {
 		if (BRAINS.isEmpty()) return;
 		String name = sender.getPlainTextName();
 		for (Brain b : BRAINS.values()) {
-			deliver(b, name, text, sender, false);
+			deliver(b, name, text, sender, false, voice);
 		}
 	}
 
 	private static void deliver(Brain b, String speakerName, String text, net.minecraft.world.entity.Entity speaker,
-			boolean fromBot) {
+			boolean fromBot, boolean voice) {
 		FakeMember m = b.member();
 		if (m.isRemoved()) return;
 		int r = settings.chatRadius;
@@ -174,7 +203,7 @@ public final class BrainManager {
 		String dn = m.getDisplayNameText();
 		boolean called = (dn != null && !dn.isBlank() && lower.contains(dn.toLowerCase(Locale.ROOT)))
 				|| lower.contains(b.personaIdLower());
-		b.onChat(lastTick, speakerName, text, near, called, fromBot);
+		b.onChat(lastTick, speakerName, text, near, called, fromBot, voice);
 	}
 
 	// ---------------------------------------------------------------- 読み込み
@@ -214,11 +243,22 @@ public final class BrainManager {
 		}
 		try {
 			String t = Files.readString(file, StandardCharsets.UTF_8);
-			return t.isBlank() ? DEFAULT_COMMON_PROMPT : t;
+			if (t.isBlank()) return DEFAULT_COMMON_PROMPT;
+			if (normalize(t).equals(normalize(OLD_DEFAULT_COMMON_PROMPT_V01))) {
+				// 旧既定文のまま（ユーザーは書き換えていない）→ 新既定文に差し替える
+				Files.writeString(file, DEFAULT_COMMON_PROMPT, StandardCharsets.UTF_8);
+				AiBuddyMod.LOGGER.info("[brain] prompt_common.txt を新しい既定文に更新した");
+				return DEFAULT_COMMON_PROMPT;
+			}
+			return t;
 		} catch (IOException e) {
 			AiBuddyMod.LOGGER.error("[brain] prompt_common.txt を読めない。既定文を使う: {}", e.toString());
 			return DEFAULT_COMMON_PROMPT;
 		}
+	}
+
+	private static String normalize(String t) {
+		return t.replace("\r\n", "\n").strip();
 	}
 
 	private static Map<String, Persona> loadPersonas(Path dir) {

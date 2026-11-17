@@ -1,0 +1,14 @@
+-d
+/tmp/w3/out
+-proc:none
+com/amaguri/aibuddy/run/Autopilot.java
+com/amaguri/aibuddy/run/Ctx.java
+com/amaguri/aibuddy/run/FastForward.java
+com/amaguri/aibuddy/run/Plan.java
+com/amaguri/aibuddy/run/Stage.java
+com/amaguri/aibuddy/skill/RunSkills.java
+com/amaguri/aibuddy/skill/PortalSkill.java
+com/amaguri/aibuddy/skill/StructureSkill.java
+com/amaguri/aibuddy/skill/SkillRunner.java
+com/amaguri/aibuddy/skill/Tools.java
+com/amaguri/aibuddy/command/AiBuddyCommands.java

@@ -46,6 +46,16 @@ loom {
 			vmArg "-Dfabric.client.gametest"
 			runDir "run"
 		}
+		// Server gametest (src/gametest/**): ./gradlew runGameTest  -> build/junit.xml
+		gameTest {
+			server()
+			name "Game Test"
+			source sourceSets.gametest
+			// Enable the Fabric gametest runner; it exits the JVM with the result when the tests finish.
+			vmArg "-Dfabric-api.gametest"
+			vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file("junit.xml").get().getAsFile()}"
+			runDir "build/gametest"
+		}
 	}
 }
 

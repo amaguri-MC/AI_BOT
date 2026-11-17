@@ -18,29 +18,56 @@ import com.amaguri.aibuddy.entity.FakeMember;
 import com.amaguri.aibuddy.skill.SkillRunner;
 
 /**
- * 1体ぶんの脳。フィールドはすべてサーバースレッドからだけ触る
- * （HTTP は別スレッドだが、結果は server.execute でサーバースレッドに戻して処理する）。
+ * 1体ぶんの脳（W4: 喋り役）。ゲームの進行は Autopilot が決めるので、ここは「出来事・チャット・声」に反応して
+ * 喋るのと、たまに follow_player / resume_run で割り込むだけ。「次どうする？」と聞いたり指示を待ったりしない。
+ *
+ * 入力トークンを抑える作り（実機ログで input_tokens が毎回 9千 まで膨らんだ原因への対策）:
+ *  - 原因1: 会話履歴を12往復ぶん毎回送っていた（各往復に状況文＋チャット全文が入っていた）→ 履歴は持たず毎回1通だけ送る
+ *  - 原因2: 返事済みのチャットを10件ずっと再送していた → 未返信のチャットだけを最大6件送り、送ったら印を付ける
+ *  - 原因3: 「暇だから8秒ごと」に呼んでいた → 出来事/チャット/声のときだけ。暇つぶしの独り言は45秒に1回まで、
+ *    近くに人がいない・早送り中は呼ばない
+ *  - system と tools は毎回同じ内容にして cache_control(ephemeral) を付け、キャッシュが効けば読み取り単価になる
+ * 1回の入力は system(約700) + tools(約350) + user(約250〜500) で概ね3千トークン以下に収まる。
+ * フィールドはすべてサーバースレッドからだけ触る（HTTP は別スレッドだが、結果は server.execute で戻して処理する）。
  */
 final class Brain {
-	private static final int MAX_CHATS = 10;
-	private static final int MAX_EVENTS = 12;
+	/** 未返信チャットを送る最大件数。 */
+	private static final int MAX_CHATS = 6;
+	private static final int MAX_EVENTS = 8;
+	private static final int MAX_MY_LINES = 3;
 	private static final int SAY_HARD_LIMIT = 120;
+	private static final int FOLLOW_PAUSE_TICKS = 60 * 20;
 	private static final Random RANDOM = new Random();
 
-	private record Chat(int tick, String name, String text) {
+	private static final class Chat {
+		final int tick;
+		final String name;
+		final String text;
+		final boolean voice;
+		boolean sent;
+
+		Chat(int tick, String name, String text, boolean voice) {
+			this.tick = tick;
+			this.name = name;
+			this.text = text;
+			this.voice = voice;
+		}
 	}
 
 	private final FakeMember member;
 	private final String personaId;
 
-	private final List<JsonObject> history = new ArrayList<>();
-	private final List<JsonObject> pendingResults = new ArrayList<>();
 	private final List<String> pendingEvents = new ArrayList<>();
 	private final Deque<Chat> chats = new ArrayDeque<>();
+	/** 自分が最近言ったこと（言い直し防止用。履歴の代わり）。 */
+	private final Deque<String> myLines = new ArrayDeque<>();
+	/** 前回のツール結果。次の入力に1度だけ載せる。 */
+	private final List<String> lastToolResults = new ArrayList<>();
 
 	private boolean chatPending;
 	private boolean inFlight;
 	private int lastThink;
+	private int lastIdleTalk;
 	private int blockedUntil;
 	private int nextFallback;
 	private int nextPuddleLine = -1;
@@ -49,8 +76,9 @@ final class Brain {
 	Brain(FakeMember member, int now, BrainSettings s) {
 		this.member = member;
 		this.personaId = member.getPersonaId();
-		// 湧いて2秒後くらいに最初の思考をする
-		this.lastThink = now - s.thinkIntervalSec * 20 + 40;
+		// 湧いて2秒後くらいに最初の挨拶をする
+		this.lastThink = now - s.minGapSec * 20 + 40;
+		this.lastIdleTalk = now - s.idleTalkSec * 20 + 40;
 	}
 
 	FakeMember member() {
@@ -63,10 +91,10 @@ final class Brain {
 
 	// ---------------------------------------------------------------- 入力
 
-	/** チャットを受け取る。near=半径内、called=名前を呼ばれた、fromBot=他のAIの発言。 */
-	void onChat(int now, String name, String text, boolean near, boolean called, boolean fromBot) {
+	/** チャット/声を受け取る。near=半径内、called=名前を呼ばれた、fromBot=他のAIの発言、voice=声で聞こえた。 */
+	void onChat(int now, String name, String text, boolean near, boolean called, boolean fromBot, boolean voice) {
 		if (!near && !called) return;
-		chats.addLast(new Chat(now, name, text));
+		chats.addLast(new Chat(now, name, text, voice));
 		while (chats.size() > MAX_CHATS) chats.removeFirst();
 		if (!fromBot || called) chatPending = true;
 	}
@@ -87,16 +115,36 @@ final class Brain {
 		}
 		nextPuddleLine = -1;
 
+		// 早送り中は誰も見ていない。出来事が溜まって一斉に喋らないよう捨てる（チャット/声が来たら早送りは解けている）
+		if (!chatPending && isFastForwarding()) {
+			pendingEvents.clear();
+			return;
+		}
+
 		if (inFlight) return;
 		if (now - lastThink < s.minGapSec * 20) return;
 
 		String trigger = null;
 		if (!pendingEvents.isEmpty()) trigger = "event";
 		else if (chatPending) trigger = "chat";
-		else if (now - lastThink >= s.thinkIntervalSec * 20 && !member.skills().isBusy()) trigger = "interval";
+		else if (now - lastIdleTalk >= s.idleTalkSec * 20 && playerNearby(s)) trigger = "interval";
 		if (trigger == null) return;
 
 		think(server, now, s, trigger);
+	}
+
+	// UNVERIFIED: FakeMember.autopilot() / Autopilot の各メソッドは W3 担当が実装中（CONTRACT の署名どおりに呼ぶ）。
+	private boolean isFastForwarding() {
+		try {
+			return member.autopilot().isFastForwarding();
+		} catch (RuntimeException e) {
+			return false;
+		}
+	}
+
+	private boolean playerNearby(BrainSettings s) {
+		// hasNearbyAlivePlayer は apidump 確認済み（EntityGetter の default メソッド、Level が実装）
+		return member.level().hasNearbyAlivePlayer(member.getX(), member.getY(), member.getZ(), s.chatRadius);
 	}
 
 	private void puddleTick(int now) {
@@ -115,6 +163,7 @@ final class Brain {
 
 	private void think(MinecraftServer server, int now, BrainSettings s, String trigger) {
 		lastThink = now;
+		if ("interval".equals(trigger)) lastIdleTalk = now;
 		Persona p = persona();
 		if (p == null) return;
 
@@ -126,33 +175,35 @@ final class Brain {
 			}
 			pendingEvents.clear();
 			chatPending = false;
+			markChatsSent();
 			maybeFallback(now, 1.0);
 			return;
 		}
 		if (now < blockedUntil) {
 			chatPending = false;
+			markChatsSent();
 			maybeFallback(now, 0.5);
 			return;
 		}
 
-		String userText = buildUserText(now);
-		JsonArray userContent = new JsonArray();
-		for (JsonObject r : pendingResults) userContent.add(r.deepCopy());
-		userContent.add(textBlock(userText));
-		JsonObject userMsg = message("user", userContent);
-
+		String userText = buildUserText(now, trigger);
+		// 履歴は持たず毎回この1通だけ（トークン節約）
 		JsonArray messages = new JsonArray();
-		for (JsonObject m : history) messages.add(m);
-		messages.add(userMsg);
+		JsonArray content = new JsonArray();
+		content.add(textBlock(userText));
+		messages.add(message("user", content));
 
 		JsonArray tools = buildTools();
 		String system = BrainManager.systemPrompt(p);
 		JsonObject body = ClaudeClient.buildBody(s, system, tools, messages);
 
 		List<String> sentEvents = new ArrayList<>(pendingEvents);
-		List<JsonObject> sentResults = new ArrayList<>(pendingResults);
+		List<Chat> sentChats = new ArrayList<>();
+		for (Chat c : chats) if (!c.sent) sentChats.add(c);
 		pendingEvents.clear();
+		lastToolResults.clear();
 		chatPending = false;
+		markChatsSent();
 		inFlight = true;
 		long t0 = System.nanoTime();
 
@@ -161,31 +212,54 @@ final class Brain {
 			long ms = (System.nanoTime() - t0) / 1_000_000L;
 			int tickNow = server.getTickCount();
 			if (err != null) {
-				onFailure(tickNow, s, trigger, userText, sentEvents, unwrap(err), ms);
+				onFailure(tickNow, s, trigger, userText, sentEvents, sentChats, unwrap(err), ms);
 			} else {
 				try {
-					onResponse(tickNow, s, trigger, userText, userMsg, sentResults, resp, ms);
+					onResponse(tickNow, s, trigger, userText, resp, ms);
 				} catch (RuntimeException e) {
 					AiBuddyMod.LOGGER.error("[brain] 応答の処理に失敗: " + personaId, e);
-					onFailure(tickNow, s, trigger, userText, sentEvents, e, ms);
+					onFailure(tickNow, s, trigger, userText, sentEvents, sentChats, e, ms);
 				}
 			}
 		}));
 	}
 
-	private String buildUserText(int now) {
+	private void markChatsSent() {
+		for (Chat c : chats) c.sent = true;
+	}
+
+	/** 入力文。状況は Autopilot の段階・目標を先頭に置く。チャット行には (声)/(チャット) を付ける。 */
+	private String buildUserText(int now, String trigger) {
 		SkillRunner sk = member.skills();
 		StringBuilder sb = new StringBuilder();
+		sb.append("今の段階: ").append(safe(() -> member.autopilot().stageName())).append('\n');
+		sb.append("目標: ").append(safe(() -> member.autopilot().goalText())).append('\n');
 		sb.append("状況: ").append(safe(sk::observe)).append('\n');
 		sb.append("今やっていること: ").append(safe(sk::status)).append('\n');
 		sb.append("新しい出来事:");
 		if (pendingEvents.isEmpty()) sb.append(" なし");
 		for (String e : pendingEvents) sb.append("\n- ").append(e);
-		sb.append("\n最近のチャット:");
-		if (chats.isEmpty()) sb.append(" なし");
+
+		sb.append("\n未返信のチャット/声:");
+		boolean any = false;
 		for (Chat c : chats) {
-			sb.append("\n- [").append(Math.max(0, (now - c.tick) / 20)).append("秒前] ")
+			if (c.sent) continue;
+			any = true;
+			sb.append("\n- [").append(Math.max(0, (now - c.tick) / 20)).append("秒前] (")
+					.append(c.voice ? "声" : "チャット").append(") ")
 					.append(c.name).append(": ").append(c.text);
+		}
+		if (!any) sb.append(" なし");
+
+		if (!myLines.isEmpty()) {
+			sb.append("\n自分が最近言ったこと（繰り返さない）:");
+			for (String l : myLines) sb.append("\n- ").append(l);
+		}
+		if (!lastToolResults.isEmpty()) {
+			sb.append("\n前回のツール結果: ").append(String.join(" / ", lastToolResults));
+		}
+		if ("interval".equals(trigger)) {
+			sb.append("\n(特に呼ばれていない。言いたいことがあれば短く独り言、無ければ wait)");
 		}
 		return sb.toString();
 	}
@@ -193,24 +267,19 @@ final class Brain {
 	private static String safe(java.util.function.Supplier<String> f) {
 		try {
 			String v = f.get();
-			return v == null ? "不明" : v;
+			return v == null || v.isBlank() ? "不明" : v;
 		} catch (RuntimeException e) {
 			return "取得失敗: " + e.getMessage();
 		}
 	}
 
-	/** D の toolSpecs() に say / wait を足したもの。 */
+	/** 脳が使うツールは4つだけ（say / wait / follow_player / resume_run）。毎回同じ内容にしてキャッシュを効かせる。 */
 	static JsonArray buildTools() {
 		JsonArray tools = new JsonArray();
-		try {
-			for (JsonElement e : SkillRunner.toolSpecs()) tools.add(e.deepCopy());
-		} catch (RuntimeException e) {
-			AiBuddyMod.LOGGER.error("[brain] toolSpecs() が失敗", e);
-		}
 
 		JsonObject say = new JsonObject();
 		say.addProperty("name", "say");
-		say.addProperty("description", "チャットで発言する。1回40字以内で短く。");
+		say.addProperty("description", "チャットで発言する（声が聞こえている相手にもそのまま届く）。1回40字以内で短く。");
 		JsonObject sayProps = new JsonObject();
 		JsonObject text = new JsonObject();
 		text.addProperty("type", "string");
@@ -221,14 +290,26 @@ final class Brain {
 
 		JsonObject wait = new JsonObject();
 		wait.addProperty("name", "wait");
-		wait.addProperty("description", "何もせず様子を見る。今の行動を続けるときや、やることが無いときに使う。");
-		JsonObject waitProps = new JsonObject();
-		JsonObject reason = new JsonObject();
-		reason.addProperty("type", "string");
-		reason.addProperty("description", "待つ理由（任意）");
-		waitProps.add("reason", reason);
-		wait.add("input_schema", schema(waitProps));
+		wait.addProperty("description", "言うことが無いとき黙っているために使う。ゲームの進行は自動で続くので、これで止まることは無い。");
+		wait.add("input_schema", schema(new JsonObject()));
 		tools.add(wait);
+
+		JsonObject follow = new JsonObject();
+		follow.addProperty("name", "follow_player");
+		follow.addProperty("description", "プレイヤーに頼まれたときだけ。60秒間、自動進行を止めてそのプレイヤーについていく。");
+		JsonObject fp = new JsonObject();
+		JsonObject player = new JsonObject();
+		player.addProperty("type", "string");
+		player.addProperty("description", "ついていくプレイヤー名（省略すると一番近い人）");
+		fp.add("player", player);
+		follow.add("input_schema", schema(fp));
+		tools.add(follow);
+
+		JsonObject resume = new JsonObject();
+		resume.addProperty("name", "resume_run");
+		resume.addProperty("description", "ついていくのをやめて、自動進行（エンドラ討伐に向けた攻略）に戻る。");
+		resume.add("input_schema", schema(new JsonObject()));
+		tools.add(resume);
 		return tools;
 	}
 
@@ -246,53 +327,30 @@ final class Brain {
 
 	// ---------------------------------------------------------------- 応答
 
-	private void onResponse(int now, BrainSettings s, String trigger, String userText, JsonObject userMsg,
-			List<JsonObject> sentResults, JsonObject resp, long ms) {
-		// 履歴に積めるブロック（text / tool_use）だけ残す
-		JsonArray content = new JsonArray();
+	private void onResponse(int now, BrainSettings s, String trigger, String userText, JsonObject resp, long ms) {
+		JsonArray toolLog = new JsonArray();
+		StringBuilder plainText = new StringBuilder();
 		JsonElement raw = resp.get("content");
 		if (raw != null && raw.isJsonArray()) {
 			for (JsonElement el : raw.getAsJsonArray()) {
 				if (!el.isJsonObject()) continue;
 				JsonObject b = el.getAsJsonObject();
 				String type = str(b, "type");
-				if ("tool_use".equals(type)) content.add(b);
-				else if ("text".equals(type) && !str(b, "text").isBlank()) content.add(b);
+				if ("text".equals(type)) {
+					plainText.append(str(b, "text"));
+				} else if ("tool_use".equals(type)) {
+					String name = str(b, "name");
+					JsonObject input = b.has("input") && b.get("input").isJsonObject() ? b.getAsJsonObject("input") : new JsonObject();
+					String result = execute(name, input);
+					if (!"say".equals(name) && !"wait".equals(name)) lastToolResults.add(name + ": " + result);
+					JsonObject tl = new JsonObject();
+					tl.addProperty("name", name);
+					tl.add("input", input);
+					tl.addProperty("result", result);
+					toolLog.add(tl);
+				}
 			}
 		}
-		if (content.isEmpty()) content.add(textBlock("……"));
-
-		history.add(userMsg);
-		history.add(message("assistant", content));
-		pendingResults.removeAll(sentResults);
-		trimHistory(s);
-
-		List<JsonObject> results = new ArrayList<>();
-		JsonArray toolLog = new JsonArray();
-		StringBuilder plainText = new StringBuilder();
-		for (JsonElement el : content) {
-			JsonObject b = el.getAsJsonObject();
-			if ("text".equals(str(b, "type"))) {
-				plainText.append(str(b, "text"));
-				continue;
-			}
-			String id = str(b, "id");
-			String name = str(b, "name");
-			JsonObject input = b.has("input") && b.get("input").isJsonObject() ? b.getAsJsonObject("input") : new JsonObject();
-			String result = execute(name, input);
-			JsonObject tr = new JsonObject();
-			tr.addProperty("type", "tool_result");
-			tr.addProperty("tool_use_id", id);
-			tr.addProperty("content", result);
-			results.add(tr);
-
-			JsonObject tl = new JsonObject();
-			tl.addProperty("name", name);
-			tl.add("input", input);
-			tl.addProperty("result", result);
-			toolLog.add(tl);
-		}
-		pendingResults.addAll(results);
 
 		JsonObject log = new JsonObject();
 		log.addProperty("trigger", trigger);
@@ -303,7 +361,17 @@ final class Brain {
 		log.addProperty("text", clip(plainText.toString(), 1000));
 		log.add("tools", toolLog);
 		log.addProperty("stopReason", str(resp, "stop_reason"));
-		if (resp.has("usage")) log.add("usage", resp.get("usage"));
+		if (resp.has("usage") && resp.get("usage").isJsonObject()) {
+			JsonObject u = resp.getAsJsonObject("usage");
+			log.add("usage", u);
+			int in = num(u, "input_tokens");
+			int cr = num(u, "cache_read_input_tokens");
+			int cc = num(u, "cache_creation_input_tokens");
+			log.addProperty("cacheRead", cr);
+			log.addProperty("cacheCreate", cc);
+			AiBuddyMod.LOGGER.info("[brain] {} ({}) input={} cache_read={} cache_create={} output={} {}ms",
+					personaId, trigger, in, cr, cc, num(u, "output_tokens"), ms);
+		}
 		BrainLog.append(personaId, log);
 	}
 
@@ -322,9 +390,24 @@ final class Brain {
 				case "wait" -> {
 					return "待機した";
 				}
+				case "follow_player" -> {
+					// UNVERIFIED: W2 の follow_player スキルの入力は {player?}（無ければ一番近い人）と仮定
+					// Autopilot を60秒止めてから、W2 の follow_player スキルを始める
+					member.autopilot().pause(FOLLOW_PAUSE_TICKS, "follow_player");
+					String r = member.skills().start("follow_player", input);
+					if (r != null && r.startsWith("できない")) {
+						member.autopilot().resume();
+						return r;
+					}
+					return r == null ? "ついていく（60秒）" : r;
+				}
+				case "resume_run" -> {
+					member.skills().stop();
+					member.autopilot().resume();
+					return "自動進行に戻った";
+				}
 				default -> {
-					String r = member.skills().start(name, input);
-					return r == null ? "開始した" : r;
+					return "できない: 知らないツール " + name;
 				}
 			}
 		} catch (RuntimeException e) {
@@ -336,16 +419,19 @@ final class Brain {
 	private void sayOut(String text) {
 		if (text.length() > SAY_HARD_LIMIT) text = text.substring(0, SAY_HARD_LIMIT);
 		member.say(text);
+		myLines.addLast(text);
+		while (myLines.size() > MAX_MY_LINES) myLines.removeFirst();
 		BrainManager.broadcastBotChat(this, text);
 	}
 
 	// ---------------------------------------------------------------- 失敗
 
 	private void onFailure(int now, BrainSettings s, String trigger, String userText, List<String> sentEvents,
-			Throwable err, long ms) {
-		// 出来事は失われないよう戻す
+			List<Chat> sentChats, Throwable err, long ms) {
+		// 出来事と未返信チャットは失われないよう戻す
 		pendingEvents.addAll(0, sentEvents);
 		while (pendingEvents.size() > MAX_EVENTS) pendingEvents.remove(0);
+		for (Chat c : sentChats) c.sent = false;
 
 		int status = err instanceof ClaudeClient.ApiException api ? api.status : -1;
 		int backoff = s.backoffSec;
@@ -380,27 +466,6 @@ final class Brain {
 		BrainLog.append(personaId, log);
 	}
 
-	// ---------------------------------------------------------------- 履歴
-
-	/** 直近 historyTurns 往復だけ残す。先頭が孤立した tool_result を指さないよう取り除く。 */
-	private void trimHistory(BrainSettings s) {
-		int max = s.historyTurns * 2;
-		boolean trimmed = false;
-		while (history.size() > max) {
-			history.remove(0);
-			history.remove(0);
-			trimmed = true;
-		}
-		if (trimmed && !history.isEmpty()) {
-			JsonObject first = history.get(0);
-			JsonArray kept = new JsonArray();
-			for (JsonElement el : first.getAsJsonArray("content")) {
-				if (!"tool_result".equals(str(el.getAsJsonObject(), "type"))) kept.add(el);
-			}
-			history.set(0, message("user", kept));
-		}
-	}
-
 	// ---------------------------------------------------------------- 補助
 
 	private Persona persona() {
@@ -429,6 +494,11 @@ final class Brain {
 	private static String str(JsonObject o, String key) {
 		JsonElement e = o.get(key);
 		return e != null && e.isJsonPrimitive() ? e.getAsString() : "";
+	}
+
+	private static int num(JsonObject o, String key) {
+		JsonElement e = o.get(key);
+		return e != null && e.isJsonPrimitive() ? e.getAsInt() : 0;
 	}
 
 	private static String clip(String s, int max) {
