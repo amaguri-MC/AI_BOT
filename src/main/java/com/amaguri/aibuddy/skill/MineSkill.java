@@ -66,6 +66,9 @@ final class MineSkill extends Skill {
 	private int reachTicks;
 	private boolean extraOre;
 	private boolean lootDig;
+	private int lootItem = -1;
+	private int lootItemTicks;
+	private final Set<Integer> lootIgnore = new HashSet<>();
 	private int reachLimit = 200;
 
 	private void ban(BlockPos p) {
@@ -385,9 +388,28 @@ final class MineSkill extends Skill {
 
 	private void loot() {
 		lootTicks++;
-		List<ItemEntity> items = SkillUtil.items(o, 7);
-		if (!items.isEmpty() && lootTicks < 400) {
-			ItemEntity it = items.get(0);
+		// 拾えない物（5秒かけても届かない）は諦めて無視リストへ。無視していない物が残る間は完了にしない。
+		ItemEntity it = null;
+		for (ItemEntity e : SkillUtil.items(o, 7)) {
+			if (!lootIgnore.contains(e.getId())) {
+				it = e;
+				break;
+			}
+		}
+		if (it != null) {
+			if (it.getId() != lootItem) {
+				lootItem = it.getId();
+				lootItemTicks = 0;
+				lootDig = false;
+				digger.cancel();
+			}
+			if (++lootItemTicks > 100) {
+				lootIgnore.add(it.getId());
+				lootItem = -1;
+				digger.cancel();
+				nav.stop();
+				return;
+			}
 			if (lootDig) {
 				// 落ちた物が壁の中の穴に閉じ込められている: 間の壁を掘って近づく
 				if (digger.active()) {
