@@ -34,6 +34,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 	private static final float LAYERS_MELT_LIMIT = 0.25f;
 
 	private int dbg;
+	private int dbgSubmit;
 	private final PlayerModel wideModel;
 	private final PlayerModel slimModel;
 
@@ -126,12 +127,12 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		// 太い腕/細い腕のモデルは submit 時に選ぶ（extract は全員分が先に走るため）
 		this.model = state.skin.model() == PlayerModelType.SLIM ? this.slimModel : this.wideModel;
 		float m = meltOf(state);
+		if (dbgSubmit++ % 60 == 0) {
+			AiBuddyMod.LOGGER.info("[melt] submit m={} collector={}", m, collector.getClass().getName());
+		}
 		if (m <= 0f) {
 			super.submit(state, poseStack, collector, camera);
 			return;
-		}
-		if ((dbg++ % 120) == 0) {
-			AiBuddyMod.LOGGER.info("[melt] submit m={}", m);
 		}
 		submitPuddle(state, poseStack, collector, m);
 		super.submit(state, poseStack, MeltCollector.wrap(collector, this.model, state, m), camera);
@@ -151,6 +152,9 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		int light = state.lightCoords;
 		// UNVERIFIED: entityTranslucent(Identifier) が白テクスチャ×頂点色で半透明に描けること
 		collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucent(PUDDLE_TEXTURE), (pose, consumer) -> {
+			if (dbgSubmit % 60 < 2) {
+				AiBuddyMod.LOGGER.info("[melt] puddle geometry callback radius={} argb={}", radius, Integer.toHexString(argb));
+			}
 			final int n = 28;
 			int rim = rimColor(argb);
 			float prevX = 0;

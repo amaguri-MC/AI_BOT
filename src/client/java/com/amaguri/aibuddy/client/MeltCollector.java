@@ -36,6 +36,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * （ModelFeatureRenderer#prepareModel が同じことをしている）。
  */
 final class MeltCollector implements SubmitNodeCollector {
+	private static final int[] DBG = new int[1];
 	private final OrderedSubmitNodeCollector inner;
 	private final SubmitNodeCollector root;
 	private final Model<?> target;
@@ -62,6 +63,9 @@ final class MeltCollector implements SubmitNodeCollector {
 	@Override
 	public <S> void submitModel(Model<? super S> model, S state, PoseStack poseStack, RenderType renderType, int light, int overlay, int tint,
 			TextureAtlasSprite sprite, int outlineColor, ModelFeatureRenderer.CrumblingOverlay crumbling) {
+		if (DBG[0]++ < 40) {
+			com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[melt] submitModel sameModel={} sameState={} renderType={}", model == target, state == targetState, renderType);
+		}
 		if (model == target && state == targetState) {
 			float time = state instanceof EntityRenderState es ? es.ageInTicks : 0f;
 			inner.submitCustomGeometry(poseStack, renderType, (pose, consumer) -> {
