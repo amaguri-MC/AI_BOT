@@ -895,7 +895,7 @@ public class AiBuddyGameTests {
 					z.setTarget(m);
 				}
 			}
-			if (t >= 16 && t <= 48) {
+			if (t >= 44 && t <= 70) {
 				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
 						+ " spr=" + m.isSprinting() + " yaw=" + m.getYRot() + " z0=" + h.relativeVec(zs.get(0).position()) + " z1=" + h.relativeVec(zs.get(1).position()) + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
 			}

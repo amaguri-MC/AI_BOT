@@ -143,7 +143,9 @@ public class FakeMember extends PathfinderMob {
 				.add(Attributes.MOVEMENT_SPEED, 0.25)
 				.add(Attributes.ATTACK_DAMAGE, 1.0)
 				.add(Attributes.FOLLOW_RANGE, 64.0)
-				.add(Attributes.STEP_HEIGHT, 1.0);
+				.add(Attributes.STEP_HEIGHT, 1.0)
+				// 上級者は足場の端で押されても踏ん張る（狭い足場で殴られて溶岩・奈落に落ちる事故を減らす）
+				.add(Attributes.KNOCKBACK_RESISTANCE, 0.5);
 	}
 
 	public static boolean isMeltFrozen() {
