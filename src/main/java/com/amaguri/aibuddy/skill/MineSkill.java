@@ -335,6 +335,7 @@ final class MineSkill extends Skill {
 			}
 			BlockHitResult hit = l.clip(new ClipContext(eye, c, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, o));
 			BlockPos first = hit.getType() == HitResult.Type.BLOCK ? hit.getBlockPos() : target;
+			extraOre = false;
 			digIsTarget = first.equals(target) || blocks.contains(l.getBlockState(first).getBlock());
 			if (digIsTarget && !harvestable(l.getBlockState(first))) {
 				// 道具が壊れた等で、もう適正に掘れない
