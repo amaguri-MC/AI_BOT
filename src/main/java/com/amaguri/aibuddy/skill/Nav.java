@@ -50,6 +50,7 @@ final class Nav {
 	private final Motion.Dasher dasher;
 	private int sinceRepath = REPATH_MIN_TICKS;
 	private Vec3 pathTarget;
+	private int directTicks;
 
 	// DIG
 	private final List<BlockPos> digQueue = new ArrayList<>();
@@ -184,6 +185,77 @@ final class Nav {
 		return p != null && p.canReach();
 	}
 
+	/** 目標への直線上の点（狭い範囲）。直進の最終手段で使う。 */
+	private Vec3 segmentTarget0() {
+		Vec3 pos = o.position();
+		double dx = goal.x - pos.x;
+		double dz = goal.z - pos.z;
+		double h = Math.sqrt(dx * dx + dz * dz);
+		if (h < 8) {
+			return goal;
+		}
+		double k = 8.0 / h;
+		return new Vec3(pos.x + dx * k, pos.y + (goal.y - pos.y) * k, pos.z + dz * k);
+	}
+
+	/** 経路の終点が今いる所から1.5ブロック以内（長さ0の部分経路）なら「進めない」とみなす。 */
+	private boolean usefulPath(PathNavigation nav) {
+		Path p = nav.getPath();
+		if (p == null || p.getNodeCount() == 0) {
+			return false;
+		}
+		BlockPos end = p.getNodePos(p.getNodeCount() - 1);
+		Vec3 e = Vec3.atBottomCenterOf(end);
+		return SkillUtil.horiz(e, o.position()) > 1.5 || Math.abs(e.y - o.getY()) > 2.0;
+	}
+
+	/**
+	 * 区間を出す。同じtickで 区間目標 → 補間点 → ゴール直指定 → 半分の距離 の順に試し、進める経路が取れた所で止める。
+	 * 全部だめで、ゴール方向が平らで空いていれば 20tick だけ moveControl で直進する（最終手段）。
+	 */
+	private void issueSegment(PathNavigation nav, double mod) {
+		Vec3 pos = o.position();
+		Vec3 seg = segmentTarget();
+		double dx = goal.x - pos.x;
+		double dy = goal.y - pos.y;
+		double dz = goal.z - pos.z;
+		Vec3[] tries = {
+				seg,
+				new Vec3(pos.x + dx * 0.5, pos.y + dy * 0.5, pos.z + dz * 0.5),
+				goal,
+				new Vec3(pos.x + dx * 0.25, pos.y + dy * 0.25, pos.z + dz * 0.25) };
+		for (Vec3 t : tries) {
+			boolean ok = nav.moveTo(t.x, t.y, t.z, mod);
+			if (usefulPath(nav)) {
+				pathFailed = !ok;
+				pathTarget = t;
+				return;
+			}
+		}
+		pathFailed = true;
+		pathTarget = seg;
+		nav.stop();
+		if (Math.abs(dy) < 2.5 && flatAhead(dx, dz)) {
+			directTicks = 20;
+		}
+	}
+
+	private boolean flatAhead(double dx, double dz) {
+		double h = Math.sqrt(dx * dx + dz * dz);
+		if (h < 0.5) {
+			return false;
+		}
+		ServerLevel l = SkillUtil.level(o);
+		for (int k = 1; k <= 3; k++) {
+			BlockPos c = BlockPos.containing(o.getX() + dx / h * k, o.getY(), o.getZ() + dz / h * k);
+			if (l.getBlockState(c).blocksMotion() || l.getBlockState(c.above()).blocksMotion()
+					|| !l.getBlockState(c.below()).blocksMotion() || Motion.isDeadly(l.getBlockState(c.below()))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private void tickNormal() {
 		// UNVERIFIED: 固体ブロックを目標にした moveTo は部分経路になる想定（canReach=false でも歩く）。詰まれば rescue() が掘る。
 		PathNavigation nav = o.getNavigation();
@@ -194,11 +266,17 @@ final class Nav {
 		// 「1秒に1回まで」は進んでいる最中の再計算（目標の移動・100tick経過）にだけ適用する。
 		boolean ended = nav.isDone() || pathTarget == null;
 		boolean wantNew = ended ? sinceRepath >= (pathFailed ? REPATH_MIN_TICKS : 2) : sinceRepath >= 100; // 失敗が続くときだけ1秒に1回
-		if (wantNew) {
-			Vec3 seg = segmentTarget();
-			boolean ok = nav.moveTo(seg.x, seg.y, seg.z, mod);
-			pathFailed = !ok;
-			pathTarget = seg;
+		if (directTicks > 0) {
+			directTicks--;
+			Vec3 gt = segmentTarget0();
+			o.getMoveControl().setWantedPosition(gt.x, gt.y, gt.z, mod);
+			if (o.onGround() && gt.y > o.getY() + 0.6) {
+				o.getJumpControl().jump();
+			}
+			o.setSprinting(dash);
+			sinceRepath = REPATH_MIN_TICKS;
+		} else if (wantNew) {
+			issueSegment(nav, mod);
 			sinceRepath = 0;
 		}
 		nav.setSpeedModifier(mod);
