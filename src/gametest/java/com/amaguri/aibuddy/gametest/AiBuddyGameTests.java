@@ -233,6 +233,12 @@ public class AiBuddyGameTests {
 				st.travelled += p.distanceTo(st.last);
 			}
 			st.last = p;
+			if (h.getTick() % 100 == 0 || h.getTick() == 1400) {
+				com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[mine-test] t={} pos={} travelled={} iron={} status={}", h.getTick(), p, st.travelled, countIncludingDropped(h, m, Items.RAW_IRON), m.skills().status());
+			}
+			if (h.getTick() == 1400) {
+				h.fail("鉄を掘り切れない: " + m.skills().status() + " travelled=" + st.travelled);
+			}
 			if (countIncludingDropped(h, m, Items.RAW_IRON) >= 2) {
 				// 目標までの直線は十数ブロック。往復していれば移動距離が大きく膨らむ。
 				h.assertTrue(st.travelled < 60, "鉄を掘るまでの移動距離が長すぎる（往復？）: " + st.travelled);
