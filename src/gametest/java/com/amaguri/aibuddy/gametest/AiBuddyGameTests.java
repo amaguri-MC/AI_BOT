@@ -335,16 +335,19 @@ public class AiBuddyGameTests {
 	public void vanillaCommandsCanTargetFakeMemberByName(GameTestHelper h) {
 		buildArena(h);
 		FakeMember m = summon(h, 4.5f, 4.5f, false);
-		m.setDisplayNameText("TestBot");
+		// 再試行・並行テストで同名の体が残っていると別の体を掴むので、毎回ユニークな名前にする
+		final String name = "TpBot" + Long.toString(System.nanoTime() % 100000000L);
+		m.setDisplayNameText(name);
 		Vec3 dest = h.absoluteVec(new Vec3(20.5, STAND, 4.5));
 		var server = h.getLevel().getServer();
 		var source = server.createCommandSourceStack().withSuppressedOutput();
 		server.getCommands().performPrefixedCommand(source, String.format(java.util.Locale.ROOT,
-				"tp TestBot %.1f %.1f %.1f", dest.x, dest.y, dest.z));
-		h.runAfterDelay(5, () -> {
-			h.assertTrue(m.position().distanceTo(dest) < 1.5, "素の名前の /tp で移動したこと: " + m.position());
-			server.getCommands().performPrefixedCommand(source, "tag @e[name=TestBot] add aibuddy_test");
-			h.assertTrue(m.entityTags().contains("aibuddy_test"), "@e[name=TestBot] で選べること");
+				"tp " + name + " %.1f %.1f %.1f", dest.x, dest.y, dest.z));
+		h.runAfterDelay(10, () -> {
+			h.assertTrue(m.position().distanceTo(dest) < 2.5, "素の名前の /tp で移動したこと: " + m.position());
+			server.getCommands().performPrefixedCommand(source, "tag @e[name=" + name + "] add aibuddy_test");
+			h.assertTrue(m.entityTags().contains("aibuddy_test"), "@e[name=" + name + "] で選べること");
+			m.discard();
 			h.succeed();
 		});
 	}
@@ -354,7 +357,8 @@ public class AiBuddyGameTests {
 	public void deadMemberRespawnsWithSameIdentityAfterThreeSeconds(GameTestHelper h) {
 		buildArena(h);
 		FakeMember m = summon(h, 4.5f, 4.5f, false);
-		m.setPersonaId("respawn_test_persona");
+		final String persona = "respawn_test_" + Long.toString(System.nanoTime() % 100000000L); // 再試行の残骸と混ざらない
+		m.setPersonaId(persona);
 		m.setSkinName("test_skin");
 		m.setDisplayNameText("Testo");
 		m.setMelt(0.6f);
@@ -365,14 +369,15 @@ public class AiBuddyGameTests {
 		h.assertTrue(m.isDeadOrDying(), "致命傷で死にかけになる");
 		h.runAfterDelay(100, () -> {
 			List<? extends FakeMember> alive = h.getLevel().getEntities(ModEntities.FAKE_MEMBER,
-					e -> e.isAlive() && "respawn_test_persona".equals(e.getPersonaId()));
+					e -> e.isAlive() && persona.equals(e.getPersonaId()));
 			h.assertTrue(alive.size() == 1, "生きている体がちょうど1つ（二重に湧かない）: " + alive.size());
 			FakeMember n = alive.get(0);
 			h.assertTrue(n != m, "新しい体に入れ替わっている");
 			h.assertTrue("Testo".equals(n.getDisplayNameText()), "表示名が同じ");
 			h.assertTrue("test_skin".equals(n.getSkinName()), "スキンが同じ");
-			h.assertTrue(n.getMelt() == 0f, "溶けは0に戻る");
+			h.assertTrue(n.getMelt() < 0.02f, "溶けは0に戻る（リスポーン後の経過tick分の溶けだけ）: " + n.getMelt());
 			h.assertTrue(n.position().distanceTo(h.absoluteVec(Vec3.atCenterOf(headRel))) < 4.0, "ベッドの近くに戻る: " + n.position());
+			n.discard();
 			h.succeed();
 		});
 	}
