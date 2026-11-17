@@ -121,8 +121,11 @@ final class Combat {
 			st.fighting = false;
 			lowerShield(o, st);
 			st.evade.begin(o, aggr);
-			st.evade.tick(o, aggr, day);
-			return;
+			if (st.evade.tick(o, aggr, day)) {
+				return;
+			}
+			// 逃げ場が無く即終了: 避難せず、そのまま通常の戦いに進む（20秒は再避難しない）
+			st.noFleeUntil = o.tickCount + 400;
 		}
 		// クリーパーは殴らない。近づかれたら離れる。ただし1回あたり最大6ブロック・40tick、そのあと4秒は後退しない（往復しない）。
 		// 後退先は床があり落差2以内・溶岩でない向きだけ
