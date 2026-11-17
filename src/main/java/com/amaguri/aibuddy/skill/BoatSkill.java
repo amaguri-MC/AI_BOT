@@ -77,6 +77,7 @@ final class BoatSkill extends Skill {
 		private double bestDist = Double.MAX_VALUE;
 		private int stallTicks;
 		private boolean triedAlt;
+		private Vec3 lastSafe;
 		boolean ok = true;
 
 		Ride(FakeMember o, Vec3 goal, Vec3 shore, BlockPos water0) {
@@ -150,6 +151,10 @@ final class BoatSkill extends Skill {
 
 		private void fail() {
 			ok = false;
+			if (s == S.SAIL && lastSafe != null) {
+				bail();
+				return;
+			}
 			abort();
 		}
 
@@ -193,6 +198,10 @@ final class BoatSkill extends Skill {
 				return;
 			}
 			Vec3 bp = boat.position();
+			if (Motion.waterColumn(l, bp.x, bp.z, bp.y) && !l.getBlockState(BlockPos.containing(bp.x, bp.y + 0.5, bp.z)).blocksMotion()
+					&& !l.getBlockState(BlockPos.containing(bp.x, bp.y + 1.5, bp.z)).blocksMotion()) {
+				lastSafe = bp; // 降りても壁の中に出ない、水の上の位置
+			}
 			double dx = goal.x - bp.x;
 			double dz = goal.z - bp.z;
 			double dist = Math.sqrt(dx * dx + dz * dz);
@@ -274,7 +283,9 @@ final class BoatSkill extends Skill {
 				BlockPos frontHead = front.above();
 				boolean wet = l.getFluidState(BlockPos.containing(nx, bp.y, nz)).is(net.minecraft.tags.FluidTags.WATER)
 						|| l.getFluidState(BlockPos.containing(nx, bp.y - 0.5, nz)).is(net.minecraft.tags.FluidTags.WATER);
-				if (wet && !l.getBlockState(front).blocksMotion() && !l.getBlockState(frontHead).blocksMotion()) {
+				BlockPos edge = BlockPos.containing(nx + dir.x * 0.9, bp.y + 0.3, nz + dir.z * 0.9); // ボートの半幅ぶん先
+				if (wet && !l.getBlockState(front).blocksMotion() && !l.getBlockState(frontHead).blocksMotion()
+						&& !l.getBlockState(edge).blocksMotion()) {
 					boat.setPos(nx, bp.y, nz);
 				}
 			}
@@ -335,6 +346,11 @@ final class BoatSkill extends Skill {
 		private void bail() {
 			ok = false;
 			o.stopRiding();
+			if (lastSafe != null) {
+				// 岸の壁にめり込んだ位置で降りると窒息する。最後に水の上だった位置へ戻す
+				o.setPos(lastSafe.x, lastSafe.y + 0.2, lastSafe.z);
+				o.setDeltaMovement(Vec3.ZERO);
+			}
 			Motion.endSwim(o);
 			recover();
 			s = S.DONE;
