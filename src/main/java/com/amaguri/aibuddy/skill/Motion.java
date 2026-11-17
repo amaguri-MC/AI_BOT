@@ -432,6 +432,15 @@ final class Motion {
 
 	// ---- 溶岩ブレーキ ----
 
+	/** 歩く入力を止める（MoveControl の前の指示・前後左右の入力を消す）。 */
+	static void halt(FakeMember o) {
+		o.getMoveControl().setWait();
+		o.setSpeed(0.0f);
+		o.setZza(0.0f);
+		o.setXxa(0.0f);
+		o.setSprinting(false);
+	}
+
 	/** 足元の四方のどこかが危険な縁なら、反対側（安全な床のある内側）の目標点を返す。縁でなければ null。 */
 	static Vec3 awayFromDeadlyEdge(FakeMember o) {
 		ServerLevel l = SkillUtil.level(o);
@@ -439,7 +448,8 @@ final class Motion {
 		int bad = 0;
 		int[][] dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
 		for (int[] d : dirs) {
-			BlockPos c = BlockPos.containing(o.getX() + d[0] * 0.9, o.getY(), o.getZ() + d[1] * 0.9);
+			// 約1.5 ブロック内側に立つ: 縁の手前で殴られても、ノックバック（耐性0.5で約1.2ブロック）で落ちない
+			BlockPos c = BlockPos.containing(o.getX() + d[0] * 1.45, o.getY(), o.getZ() + d[1] * 1.45);
 			boolean floor = false;
 			boolean deadly = isDeadly(l.getBlockState(c));
 			for (int dd = 1; dd <= 2 && !deadly; dd++) {

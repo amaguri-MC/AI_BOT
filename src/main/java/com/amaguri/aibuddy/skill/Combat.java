@@ -75,6 +75,7 @@ final class Combat {
 		int backoffTicks;
 		Vec3 backoffFrom = Vec3.ZERO;
 		String dbg = ""; // TRACE
+		String gate = ""; // TRACE
 	}
 
 	private static final Map<FakeMember, State> STATES = new WeakHashMap<>();
@@ -98,7 +99,8 @@ final class Combat {
 			System.out.println("[lavadbg] tc=" + o.tickCount + " pos=" + String.format("%.2f,%.2f,%.2f", o.getX(), o.getY(), o.getZ())
 					+ " v0=" + String.format("%.3f,%.3f,%.3f", v0.x, v0.y, v0.z) + " ground=" + o.onGround() + " hurt=" + o.hurtTime
 					+ " fight=" + ts.fighting + " evade=" + ts.evade.active + "/" + ts.evade.mode + " cd=" + ts.cooldown
-					+ " nav=" + o.getNavigation().isInProgress() + " spr=" + o.isSprinting() + " act=" + ts.dbg);
+					+ " nav=" + o.getNavigation().isInProgress() + " spr=" + o.isSprinting() + " act=" + ts.dbg + ts.gate);
+			ts.gate = "";
 		}
 	}
 
@@ -181,6 +183,9 @@ final class Combat {
 		}
 		LivingEntity threat = scan(o, l, st, aggr, purposeful);
 		if (threat == null) {
+			if (st.fighting && !st.retreating) {
+				Motion.halt(o); // 相手がいなくなった（溶岩に落ちた等）: 前の指示のまま歩き続けない
+			}
 			if (st.fighting && ++st.calm > 40 && !st.retreating) {
 				endFight(o, st);
 			} else if (st.retreating) {
@@ -283,7 +288,7 @@ final class Combat {
 
 	private static LivingEntity scan(FakeMember o, ServerLevel l, State st, List<LivingEntity> aggr, boolean purposeful) {
 		if (o.tickCount % 4 != 0 && st.target != null && st.target.isAlive() && o.distanceToSqr(st.target) < 14 * 14
-				&& !isIgnored(o, st, st.target)) {
+				&& !isIgnored(o, st, st.target) && isThreat(o, st.target)) { // 溶岩に落ちた敵は追い続けない
 			return st.target;
 		}
 		AABB box = o.getBoundingBox().inflate(16, 8, 16);
@@ -464,7 +469,7 @@ final class Combat {
 				double dl = Math.max(1e-3, Math.sqrt(dv.x * dv.x + dv.z * dv.z));
 				double step = Math.min(dl, 1.5);
 				if (Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() + dv.x / dl * step, o.getZ() + dv.z / dl * step, o.getY()))) {
-					o.setSprinting(false);
+					Motion.halt(o); // 前の指示で歩き続けない
 					st.dbg += " edgeWait";
 					return;
 				}

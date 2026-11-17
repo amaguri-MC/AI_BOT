@@ -102,6 +102,9 @@ public class FakeMember extends PathfinderMob {
 		super(type, level);
 		setCanPickUpLoot(true);
 		setPersistenceRequired();
+		// 足を置く先の共通の関門: どの移動（戦闘・避難・経路・スキル）も溶岩・火・大きな落下へ踏み出さず、跳び込まない
+		this.moveControl = new com.amaguri.aibuddy.skill.SafeFooting.Move(this);
+		this.jumpControl = new com.amaguri.aibuddy.skill.SafeFooting.Jump(this);
 		// 死んだとき装備も必ず落とす（keepInventory のときは dropCustomDeathLoot 側で落とさず引き継ぐ）
 		for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.VALUES) {
 			if (slot != net.minecraft.world.entity.EquipmentSlot.BODY && slot != net.minecraft.world.entity.EquipmentSlot.SADDLE) {

@@ -36,6 +36,8 @@ public class AiBuddyGameTests {
 	/** 寝るテスト専用の高さ（隣のテストの舞台がベッドを上書きしないように） */
 	private static final int SLEEP_FLOOR = 160;
 	private static final int WAKE_FLOOR = 200;
+	/** 鉄を掘るテスト専用の高さ（隣の舞台が石の壁・落ちた鉄に重ならないように） */
+	private static final int MINE_FLOOR = 240;
 	private static final int LEN = 48;
 	private static final int WID = 9;
 
@@ -214,17 +216,17 @@ public class AiBuddyGameTests {
 	/** 壁（石）の中に埋まった鉄鉱石2個を、2つの間を往復せずに掘り切れること。 */
 	@GameTest(maxTicks = 1500)
 	public void mineTwoBuriedIronOresWithoutPingPong(GameTestHelper h) {
-		buildArena(h);
+		buildArena(h, MINE_FLOOR);
 		for (int x = 10; x <= 16; x++) {
-			for (int y = STAND; y <= STAND + 3; y++) {
+			for (int y = (MINE_FLOOR + 1); y <= (MINE_FLOOR + 1) + 3; y++) {
 				for (int z = 1; z <= 7; z++) {
 					h.setBlock(x, y, z, Blocks.STONE);
 				}
 			}
 		}
-		h.setBlock(12, STAND + 1, 4, Blocks.IRON_ORE);
-		h.setBlock(14, STAND + 1, 3, Blocks.IRON_ORE);
-		FakeMember m = summon(h, 3.5f, 4.5f, false);
+		h.setBlock(12, (MINE_FLOOR + 1) + 1, 4, Blocks.IRON_ORE);
+		h.setBlock(14, (MINE_FLOOR + 1) + 1, 3, Blocks.IRON_ORE);
+		FakeMember m = summon(h, 3.5f, 4.5f, false, MINE_FLOOR);
 		m.getInventory().addItem(new ItemStack(Items.STONE_PICKAXE));
 		String r = m.skills().start("mine", json("block", "iron", "count", 2));
 		h.assertTrue(!refused(r), "石のツルハシ持ちで mine iron が始まらない: " + r);

@@ -241,7 +241,7 @@ final class Evade {
 		Vec3 to = o.position().add(dir.scale(10));
 		Combat.state(o).dbg = "RUN->" + String.format("%.2f,%.2f", to.x, to.z); // TRACE
 		o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
-		if (o.onGround() && o.tickCount % 11 == 0) {
+		if (o.onGround() && o.tickCount % 11 == 0 && Motion.safeToJump(o)) {
 			o.getJumpControl().jump();
 		}
 		Motion.lavaBrake(o);
