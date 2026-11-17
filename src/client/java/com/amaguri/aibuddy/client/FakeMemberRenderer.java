@@ -33,6 +33,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 	/** 溶けがこれ以上なら手持ちアイテムは描かない（腕の位置が変形後の体とずれるため）。 */
 	private static final float LAYERS_MELT_LIMIT = 0.25f;
 
+	private int dbg;
 	private final PlayerModel wideModel;
 	private final PlayerModel slimModel;
 
@@ -72,6 +73,9 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		state.leftArmPose = armPose(entity.getOffhandItem());
 
 		float melt = Math.max(0f, Math.min(1f, entity.getMelt()));
+		if (melt > 0f && (dbg++ % 120) == 0) {
+			AiBuddyMod.LOGGER.info("[melt] extract melt={} state={}", melt, state.getClass().getSimpleName());
+		}
 		if (state instanceof FakeMemberRenderState fs) {
 			fs.melt = melt;
 			// 胴の平均色はテクスチャID単位でキャッシュ済み（毎フレームは Map 引きだけ）
@@ -125,6 +129,9 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		if (m <= 0f) {
 			super.submit(state, poseStack, collector, camera);
 			return;
+		}
+		if ((dbg++ % 120) == 0) {
+			AiBuddyMod.LOGGER.info("[melt] submit m={}", m);
 		}
 		submitPuddle(state, poseStack, collector, m);
 		super.submit(state, poseStack, MeltCollector.wrap(collector, this.model, state, m), camera);
