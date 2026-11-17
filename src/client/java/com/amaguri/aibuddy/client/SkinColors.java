@@ -14,6 +14,8 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.PlayerSkin;
 import net.minecraft.world.item.component.ResolvableProfile;
 
+import com.amaguri.aibuddy.entity.FakeMember;
+
 /**
  * スキン名 -> ResolvableProfile、スキンのテクスチャID -> 平均色 のキャッシュ。
  * 平均色はテクスチャIDごとに1回だけ計算する（デフォルトスキン→本物のスキンに変わるとIDが変わるので再計算される）。
@@ -21,23 +23,19 @@ import net.minecraft.world.item.component.ResolvableProfile;
 public final class SkinColors {
 	/** 読めなかったときの色（くすんだ水色）。 */
 	private static final int FALLBACK = 0x507080;
-	private static final Map<String, ResolvableProfile> PROFILES = new HashMap<>();
 	private static final Map<Identifier, Integer> AVERAGES = new HashMap<>();
 
 	private SkinColors() {
 	}
 
-	public static ResolvableProfile profileOf(String skinName) {
-		return PROFILES.computeIfAbsent(skinName, ResolvableProfile::createUnresolved);
-	}
-
-	/** 取得前はデフォルトスキンが返る（getOrDefault の仕様）。 */
-	public static PlayerSkin skinOf(String skinName) {
-		PlayerSkinRenderCache cache = Minecraft.getInstance().playerSkinRenderCache();
-		if (skinName == null || skinName.isBlank()) {
+	/** サーバーが解決して同期したプロフィールで引く（毎フレーム新規作成しない）。未解決/未設定なら既定スキン。 */
+	public static PlayerSkin skinOf(FakeMember member) {
+		ResolvableProfile profile = member.getProfile();
+		if (profile == null || ResolvableProfile.Static.EMPTY.equals(profile)) {
 			return net.minecraft.client.resources.DefaultPlayerSkin.getDefaultSkin();
 		}
-		return cache.getOrDefault(profileOf(skinName)).playerSkin();
+		PlayerSkinRenderCache cache = Minecraft.getInstance().playerSkinRenderCache();
+		return cache.getOrDefault(profile).playerSkin();
 	}
 
 	/** 水たまり・滴の色。胴70% + 顔30% の平均を 0.8 倍に暗くした 0xRRGGBB。 */

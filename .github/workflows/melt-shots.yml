@@ -2,7 +2,7 @@
 name: melt-shots
 on:
   push:
-    branches: [melt-fix]
+    branches: [melt-fix, skin-fix]
 
 permissions:
   contents: write
@@ -38,7 +38,7 @@ jobs:
         run: |
           rm -rf out && mkdir out
           cp run/screenshots/*.png out/ 2>/dev/null || true
-          grep -E "meltshot|\[melt\]|Exception|ERROR" gametest.log | tail -80 > out/log.txt || true
+          grep -E "meltshot|skincheck|スキン|\[melt\]|Exception|ERROR" gametest.log | tail -80 > out/log.txt || true
           cd out
           git init -q -b melt-shots && git add -A
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -q -m "melt shots ${GITHUB_SHA::7} (${{ steps.gt.outcome }})" --allow-empty

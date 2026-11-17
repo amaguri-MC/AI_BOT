@@ -34,7 +34,7 @@ public class AiBuddyClient implements ClientModInitializer {
 			if (rnd.nextFloat() > 0.1f + 0.5f * (m - 0.2f) / 0.8f) {
 				continue;
 			}
-			PlayerSkin skin = SkinColors.skinOf(f.getSkinName());
+			PlayerSkin skin = SkinColors.skinOf(f);
 			int rgb = SkinColors.puddleRgb(skin);
 			double spread = 0.25 + 0.4 * m;
 			double x = f.getX() + (rnd.nextDouble() - 0.5) * 2.0 * spread;
