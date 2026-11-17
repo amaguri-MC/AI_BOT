@@ -96,7 +96,7 @@ final class Plan {
 		List<Row> t = new ArrayList<>();
 		// 夜（雷雨）でベッドがあれば何より先に寝る（リスポーン地点の更新も兼ねる）。ネザー/エンドでは SleepRules が false
 		if (s != Stage.DONE) {
-			t.add(row("sleep", c -> com.amaguri.aibuddy.skill.SleepRules.shouldSleep(c.o), "sleep", c -> j(), 20 * 60 * 8, "夜はベッドで寝る"));
+			t.add(row("sleep", c -> com.amaguri.aibuddy.skill.SleepRules.shouldSleep(c.o), "sleep", c -> j(), 12000, "夜はベッドで寝る"));
 		}
 		switch (s) {
 			case WOOD -> {

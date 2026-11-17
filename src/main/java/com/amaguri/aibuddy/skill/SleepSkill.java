@@ -26,6 +26,8 @@ final class SleepSkill extends Skill {
 	private static final int WALK_TIMEOUT = 20 * 40;
 	private static final double ENEMY_RANGE = 8.0;
 	private static final double SLEEP_REACH = 2.0;
+	/** 本物のプレイヤーが寝ていなければ、この時間（約3秒）横になったら起きる。 */
+	private static final int LIE_TICKS = 60;
 
 	private final boolean pickup;
 	private BlockPos head;
@@ -33,6 +35,7 @@ final class SleepSkill extends Skill {
 	private ItemStack bedItem = ItemStack.EMPTY;
 	private int ticks;
 	private boolean slept;
+	private int lieTicks;
 
 	SleepSkill(FakeMember o, SkillRunner r, boolean pickup) {
 		super(o, r);
@@ -49,6 +52,9 @@ final class SleepSkill extends Skill {
 		}
 		if (!SleepRules.isSleepTime(l)) {
 			return "できない: まだ寝る時間じゃない";
+		}
+		if (!SleepRules.policyOk(o, l)) {
+			return "できない: 今夜はもう寝た（一晩1回）";
 		}
 		if (enemyNear(l)) {
 			return "できない: 近くに敵がいる";
@@ -133,10 +139,13 @@ final class SleepSkill extends Skill {
 		}
 		if (o.isSleeping()) {
 			slept = true;
+			lieTicks++;
 			if (!SleepRules.isSleepTime(l)) {
 				wake(l, "朝になって起きた");
 			} else if (enemyNear(l)) {
 				wake(l, "敵が近づいて起きた");
+			} else if (lieTicks >= LIE_TICKS && !SleepRules.realPlayerSleeping(l)) {
+				wake(l, "リスポーン地点を更新して起きた"); // ボットが寝ても夜は飛ばないので、誰も寝ていなければすぐ進行に戻る
 			}
 			return;
 		}
@@ -173,6 +182,7 @@ final class SleepSkill extends Skill {
 			return;
 		}
 		o.setBed(head, o.level().dimension());
+		o.setSleptDay(SleepRules.today(l)); // 一晩1回の印
 		o.postEvent("ベッドで寝た（ここがリスポーン地点）");
 	}
 

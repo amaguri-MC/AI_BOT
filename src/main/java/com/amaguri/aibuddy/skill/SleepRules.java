@@ -21,10 +21,36 @@ public final class SleepRules {
 		if (!(m.level() instanceof ServerLevel l) || m.isPuddle() || m.isSleeping() || m.isDeadOrDying()) {
 			return false;
 		}
-		if (!isSleepTime(l)) {
+		if (!isSleepTime(l) || !policyOk(m, l)) {
 			return false;
 		}
 		return Inv.count(m, ItemTags.BEDS) > 0 || ownBedNearby(m) != null;
+	}
+
+	/** 今の夜の日数（夜は同じ日数のまま 13000〜23000）。 */
+	public static long today(ServerLevel l) {
+		return Math.floorDiv(l.getOverworldClockTime(), 24000L);
+	}
+
+	/**
+	 * 寝る方針: 夜は一晩1回だけ（印が今夜でなければ）。昼の雷雨は本物のプレイヤーが寝ているときだけ。
+	 * ボットが寝ても夜は飛ばないので、毎晩朝まで止まらないようにする。
+	 */
+	static boolean policyOk(FakeMember m, ServerLevel l) {
+		if (Observer.isNight(l)) {
+			return m.getSleptDay() != today(l) || realPlayerSleeping(l);
+		}
+		return realPlayerSleeping(l);
+	}
+
+	/** 同じ次元で寝ている本物のプレイヤーがいるか。 */
+	static boolean realPlayerSleeping(ServerLevel l) {
+		for (net.minecraft.server.level.ServerPlayer p : l.players()) {
+			if (p.isSleeping()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** オーバーワールドで、夜か雷雨。 */

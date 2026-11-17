@@ -469,11 +469,56 @@ public class AiBuddyGameTests {
 		h.assertTrue(com.amaguri.aibuddy.skill.SleepRules.shouldSleep(m), "夜でベッドを持っていれば寝てよい");
 		String r = m.skills().startAuto("sleep", new JsonObject());
 		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
-		h.runAfterDelay(120, () -> {
+		h.runAfterDelay(30, () -> {
 			boolean ok = m.isSleeping() && m.getBedPos() != null
 					&& m.level().getBlockState(m.getBedPos()).getBlock() instanceof net.minecraft.world.level.block.BedBlock;
 			server.getCommands().performPrefixedCommand(source, "time set day");
 			h.assertTrue(ok, "寝ていてリスポーン地点が更新されている: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos());
+			h.succeed();
+		});
+	}
+
+	/** 本物のプレイヤーが寝ていなければ、数秒横になってリスポーン地点を更新したら起きる（一晩1回の印も付く）。 */
+	@GameTest(maxTicks = 300)
+	public void memberWakesAfterFewSecondsWhenNoRealPlayerSleeps(GameTestHelper h) {
+		buildArena(h);
+		var server = h.getLevel().getServer();
+		var source = server.createCommandSourceStack().withSuppressedOutput();
+		server.getCommands().performPrefixedCommand(source, "time set night");
+		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		m.getInventory().addItem(new ItemStack(Items.BED.pick(net.minecraft.world.item.DyeColor.RED)));
+		String r = m.skills().startAuto("sleep", new JsonObject());
+		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
+		h.runAfterDelay(160, () -> {
+			boolean woke = !m.isSleeping() && m.getBedPos() != null && m.getSleptDay() >= 0;
+			server.getCommands().performPrefixedCommand(source, "time set day");
+			h.assertTrue(woke, "約3秒で起きて、ベッドと印が残る: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos() + " day=" + m.getSleptDay());
+			h.succeed();
+		});
+	}
+
+	/** 寝た状態で保存して読み込んでも、寝たまま固まらず起きる。 */
+	@GameTest(maxTicks = 100)
+	public void sleepingMemberWakesAfterSaveAndLoad(GameTestHelper h) {
+		buildArena(h);
+		net.minecraft.core.BlockPos headRel = new net.minecraft.core.BlockPos(14, STAND, 4);
+		placeBed(h, headRel);
+		FakeMember m = summon(h, 13.5f, 4.5f, false);
+		m.startSleeping(h.absolutePos(headRel));
+		h.assertTrue(m.isSleeping(), "前提: 寝ている");
+		var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(
+				net.minecraft.util.ProblemReporter.DISCARDING, h.getLevel().registryAccess());
+		m.saveWithoutId(out);
+		var tag = out.buildResult();
+		m.discard();
+		FakeMember n = ModEntities.FAKE_MEMBER.create(h.getLevel(), net.minecraft.world.entity.EntitySpawnReason.LOAD);
+		n.load(net.minecraft.world.level.storage.TagValueInput.create(
+				net.minecraft.util.ProblemReporter.DISCARDING, h.getLevel().registryAccess(), tag));
+		h.getLevel().addFreshEntity(n);
+		h.runAfterDelay(10, () -> {
+			boolean awake = !n.isSleeping();
+			n.discard();
+			h.assertTrue(awake, "読込後の初tickで起きる");
 			h.succeed();
 		});
 	}

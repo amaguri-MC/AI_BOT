@@ -78,6 +78,15 @@ public class FakeMember extends PathfinderMob {
 	private boolean deathHandled;
 	private boolean keepInventoryOnDeath;
 	private boolean respawned;
+	private int respawnFailures;
+	private int respawnRetryAt = RESPAWN_DELAY_TICKS;
+	/** 最後に寝た夜の日数（一晩1回の印）。-1 なら未。 */
+	private long sleptDay = -1;
+	/** 読込直後の初tickで、寝たまま保存されていたら起こす。 */
+	private boolean wakeOnLoadCheck;
+	/** リスポーン再試行の最大回数（超えたらワールドスポーンへ）。 */
+	private static final int RESPAWN_MAX_RETRIES = 5;
+	private static final int RESPAWN_RETRY_TICKS = 20;
 	/** 死んでからリスポーンするまで（tick）。 */
 	public static final int RESPAWN_DELAY_TICKS = 60;
 	private net.minecraft.world.phys.Vec3 lastTickPos;
@@ -105,6 +114,14 @@ public class FakeMember extends PathfinderMob {
 
 	public net.minecraft.resources.ResourceKey<Level> getBedDim() {
 		return bedDim;
+	}
+
+	public long getSleptDay() {
+		return sleptDay;
+	}
+
+	public void setSleptDay(long day) {
+		this.sleptDay = day;
 	}
 
 	/** リスポーン地点のベッドを覚える（null で忘れる）。 */
@@ -304,6 +321,16 @@ public class FakeMember extends PathfinderMob {
 		if (isDeadOrDying()) {
 			return; // 死んでいる間は進行もスキルも止める（リスポーンは tickDeath）
 		}
+		if (wakeOnLoadCheck) {
+			wakeOnLoadCheck = false;
+			if (isSleeping()) {
+				stopSleeping(); // 寝たまま保存されていても起きる
+			}
+		}
+		// 寝ているのに sleep スキルが動いていなければ起こす（寝たまま固まらない）
+		if (isSleeping() && !skills().currentName().startsWith("Sleep")) {
+			stopSleeping();
+		}
 		ensureAttached();
 		if (!meltFrozen && !isPuddle() && this.tickCount % MELT_STEP_INTERVAL == 0) {
 			setMelt(getMelt() + MELT_PER_TICK * MELT_STEP_INTERVAL);
@@ -472,25 +499,37 @@ public class FakeMember extends PathfinderMob {
 			return;
 		}
 		this.deathTime++;
-		if (this.deathTime >= RESPAWN_DELAY_TICKS && !respawned) {
-			respawned = true;
+		if (this.deathTime >= respawnRetryAt && !respawned) {
+			boolean ok = false;
 			try {
-				respawnAsNewBody(sl);
+				ok = respawnAsNewBody(sl, respawnFailures >= RESPAWN_MAX_RETRIES);
 			} catch (RuntimeException e) {
 				AiBuddyMod.LOGGER.warn("respawn failed for {}", getDisplayNameText(), e);
 			}
-			sl.broadcastEntityEvent(this, (byte) 60);
-			remove(Entity.RemovalReason.KILLED);
+			if (ok) {
+				respawned = true;
+				sl.broadcastEntityEvent(this, (byte) 60);
+				remove(Entity.RemovalReason.KILLED); // 新しい体を追加できたときだけ古い体を消す
+			} else if (respawnFailures >= RESPAWN_MAX_RETRIES) {
+				// ワールドスポーンでも駄目: 死体は残さず消す。人格は BrainManager に残るので /aibuddy spawn で呼び直せる
+				respawned = true;
+				AiBuddyMod.LOGGER.error("respawn gave up for {} (persona {}); use /aibuddy spawn", getDisplayNameText(), personaId);
+				sl.broadcastEntityEvent(this, (byte) 60);
+				remove(Entity.RemovalReason.KILLED);
+			} else {
+				respawnFailures++;
+				respawnRetryAt = this.deathTime + RESPAWN_RETRY_TICKS;
+			}
 		}
 	}
 
-	private void respawnAsNewBody(ServerLevel from) {
+	private boolean respawnAsNewBody(ServerLevel from, boolean forceWorldSpawn) {
 		net.minecraft.server.MinecraftServer server = from.getServer();
 		ServerLevel target = null;
 		net.minecraft.world.phys.Vec3 pos = null;
 		float yaw = getYRot();
 		boolean lostBed = false;
-		if (bedPos != null && bedDim != null) {
+		if (!forceWorldSpawn && bedPos != null && bedDim != null) {
 			ServerLevel bl = server.getLevel(bedDim);
 			if (bl != null && bl.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) {
 				net.minecraft.core.Direction dir = net.minecraft.world.level.block.BedBlock.getBedOrientation(bl, bedPos);
@@ -512,7 +551,7 @@ public class FakeMember extends PathfinderMob {
 		}
 		FakeMember n = ModEntities.FAKE_MEMBER.create(target, EntitySpawnReason.TRIGGERED);
 		if (n == null) {
-			return;
+			return false;
 		}
 		n.snapTo(pos.x, pos.y, pos.z, yaw, 0f);
 		n.setPersonaId(personaId);
@@ -535,12 +574,17 @@ public class FakeMember extends PathfinderMob {
 		// Autopilot の段階・合図済みか・場所の記憶(marks)と、報告済み記録・未処理の出来事を引き継ぐ
 		n.autopilot().load(autopilot().save());
 		n.skills().inheritFrom(skills());
+		n.sleptDay = sleptDay;
+		if (!target.addFreshEntity(n)) {
+			n.discard();
+			return false;
+		}
 		n.events.addAll(drainEvents());
 		if (lostBed) {
 			n.postEvent("ベッドが無くなっていた");
 		}
 		n.postEvent("リスポーンした");
-		target.addFreshEntity(n);
+		return true;
 	}
 
 	@Override
@@ -569,6 +613,7 @@ public class FakeMember extends PathfinderMob {
 			output.putLong("BedPos", bedPos.asLong());
 			output.putString("BedDim", bedDim.identifier().toString());
 		}
+		output.putLong("SleptDay", sleptDay);
 		// UNVERIFIED: ItemStack.CODEC (non-optional) assumed correct for storeAsItemList (empty slots are skipped).
 		inventory.storeAsItemList(output.list("Inventory", ItemStack.CODEC));
 		output.store("Autopilot", net.minecraft.nbt.CompoundTag.CODEC, autopilot().save());
@@ -589,6 +634,8 @@ public class FakeMember extends PathfinderMob {
 			this.bedPos = net.minecraft.core.BlockPos.of(l);
 			this.bedDim = net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, Identifier.parse(d));
 		});
+		this.sleptDay = input.getLongOr("SleptDay", -1L);
+		this.wakeOnLoadCheck = true;
 		this.lastAppliedSlowMelt = -1f;
 		if (!level().isClientSide()) {
 			updateMeltSlow();
