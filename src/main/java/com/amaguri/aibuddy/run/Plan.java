@@ -71,8 +71,7 @@ final class Plan {
 		String at = " 座標 " + c.o.blockPosition().getX() + " " + c.o.blockPosition().getY() + " " + c.o.blockPosition().getZ();
 		return switch (s) {
 			case WOOD -> "原木3本取った";
-			case TABLE -> "作業台置いた" + (c.mark(RunSkills.MARK_TABLE) == null ? "" : " 座標 " + c.mark(RunSkills.MARK_TABLE).getX() + " "
-					+ c.mark(RunSkills.MARK_TABLE).getY() + " " + c.mark(RunSkills.MARK_TABLE).getZ());
+			case TABLE -> "作業台置いた";
 			case WOODEN_PICK -> "木のツルハシ作った";
 			case STONE -> "石ツルハシと石斧作った";
 			case MORE_WOOD -> "原木を追加で集めた（" + c.logs() + "本）";

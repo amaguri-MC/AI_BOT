@@ -143,7 +143,7 @@ final class Brain {
 		if (now - lastThink < s.minGapSec * 20) return;
 
 		String trigger = null;
-		if (!pendingEvents.isEmpty()) trigger = "event";
+		if (pendingEvents.stream().anyMatch(Brain::isReportWorthy)) trigger = "event";
 		else if (chatPending) trigger = "chat";
 		else if (now - lastIdleTalk >= s.idleTalkSec * 20 && playerNearby(s)) trigger = "interval";
 		if (trigger == null) return;
@@ -531,5 +531,12 @@ final class Brain {
 
 	private static String clip(String s, int max) {
 		return s.length() <= max ? s : s.substring(0, max) + "...";
+	}
+
+	/** 喋るきっかけにする大事な出来事か（原木・石・道具づくり等の細かい進みは、次に喋るときの文脈に回すだけ）。 */
+	static boolean isReportWorthy(String e) {
+		return java.util.regex.Pattern.compile(
+				"あった|見つけ|座標|ゲート|ブレ|ロッド|パール|アイ|要塞|砦|村|沈没船|宝|ネザー|エンド|ドラ|クリスタル|死んだ|リスポーン|体力が少ない|たこ焼き|溶け|スタートした|移動した")
+				.matcher(e).find();
 	}
 }
