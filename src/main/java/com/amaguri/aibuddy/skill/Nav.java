@@ -159,7 +159,9 @@ final class Nav {
 		double h = Math.sqrt(dx * dx + dz * dz);
 		if (h > 36) {
 			double k = 32.0 / h;
-			return SkillUtil.snap(o, pos.x + dx * k, pos.z + dz * k, pos.y);
+			// 高さは目標へ線形補間（地表の高さマップに吸着させない: 上空の足場・洞窟・ネザーで到達不能な高さになるため）。
+			// 実際の足場はパスファインダが近い到達可能ノードへ寄せる。
+			return new Vec3(pos.x + dx * k, pos.y + (goal.y - pos.y) * k, pos.z + dz * k);
 		}
 		return goal;
 	}
@@ -172,8 +174,11 @@ final class Nav {
 		double mod = Motion.speedMod(o, dash, speed);
 		Vec3 seg = segmentTarget();
 		boolean moved = pathTarget == null || pathTarget.distanceToSqr(seg) > 16.0;
-		boolean wantNew = nav.isDone() || moved || sinceRepath >= 100;
-		if (wantNew && sinceRepath >= REPATH_MIN_TICKS) {
+		// 経路が終わっている（区間の継ぎ目・開始直後・失敗）なら同じtickで次を出す（2tickの暴走ガードだけ）。
+		// 「1秒に1回まで」は進んでいる最中の再計算（目標の移動・100tick経過）にだけ適用する。
+		boolean ended = nav.isDone() || pathTarget == null;
+		boolean wantNew = ended ? sinceRepath >= 2 : (moved || sinceRepath >= 100) && sinceRepath >= REPATH_MIN_TICKS;
+		if (wantNew) {
 			boolean ok = nav.moveTo(seg.x, seg.y, seg.z, mod);
 			pathFailed = !ok;
 			pathTarget = seg;

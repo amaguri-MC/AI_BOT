@@ -33,6 +33,14 @@ public class AiBuddyGameTests {
 
 	/** 床は土、周りと天井はガラス、中は空気。 */
 	private static void buildArena(GameTestHelper h) {
+		// 舞台は隣のチャンクまで伸びる。端のチャンクが entity ticking でないと mob が宙で凍るので、確実に読み込んでおく。
+		net.minecraft.core.BlockPos a = h.absolutePos(new net.minecraft.core.BlockPos(0, FLOOR, 0));
+		net.minecraft.core.BlockPos b = h.absolutePos(new net.minecraft.core.BlockPos(LEN - 1, FLOOR, WID - 1));
+		for (int cx = (a.getX() >> 4) - 1; cx <= (b.getX() >> 4) + 1; cx++) {
+			for (int cz = (a.getZ() >> 4) - 1; cz <= (b.getZ() >> 4) + 1; cz++) {
+				h.getLevel().setChunkForced(cx, cz, true); // UNVERIFIED: ServerLevel.setChunkForced(int,int,boolean)
+			}
+		}
 		for (int x = 0; x < LEN; x++) {
 			for (int y = 0; y < 6; y++) {
 				for (int z = 0; z < WID; z++) {
