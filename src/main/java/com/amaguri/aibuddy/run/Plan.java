@@ -108,6 +108,7 @@ final class Plan {
 				t.add(row("planks", c -> c.planks() < 3 + (c.sticks() < 2 ? 2 : 0) && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", Math.min(c.logs(), 2) * 4), 20, "板材"));
 				t.add(row("sticks", c -> c.sticks() < 2 && c.planks() >= 2, "craft", c -> j("item", "stick", "count", c.planks() >= 7 ? 8 : 4), 20, "棒"));
 				t.add(row("to_table", c -> c.planks() >= 3 && c.sticks() >= 2 && !c.tableNear(3.5) && c.tableNear(48), "goto", c -> pos(c.mark(RunSkills.MARK_TABLE)), 20 * 20, "作業台へ戻る"));
+				addNewTable(t, 3);
 				t.add(row("wpick", c -> c.planks() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "wooden_pickaxe", "count", 1), 30, "木のツルハシ"));
 				t.add(row("log", c -> c.logs() == 0 && c.planks() < 3, "mine", c -> j("block", "log", "count", 1), 20 * 60, "原木"));
 			}
@@ -116,6 +117,7 @@ final class Plan {
 				t.add(row("cobble", c -> c.cobble() < cobbleNeed(c), "mine", c -> j("block", "stone", "count", Math.max(1, cobbleNeed(c) - c.cobble())), 20 * 60, "丸石を最低限"));
 				addSticks(t, c -> stickNeed(c));
 				t.add(row("to_table", c -> c.cobble() >= cobbleNeed(c) && !c.tableNear(3.5) && c.tableNear(48), "goto", c -> pos(c.mark(RunSkills.MARK_TABLE)), 20 * 30, "作業台へ戻る"));
+				addNewTable(t, 0);
 				t.add(row("spick", c -> c.pickTier() < 2 && c.cobble() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "stone_pickaxe", "count", 1), 30, "石のツルハシ"));
 				t.add(row("saxe", c -> c.axeTier() < 2 && c.cobble() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "stone_axe", "count", 1), 30, "石の斧"));
 			}
@@ -143,6 +145,14 @@ final class Plan {
 				// 見つかった物で足りない時だけ、見えている鉄鉱石を少し掘る
 				t.add(row("iron_visible", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c) && c.exposedIron(16), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 90, "見えている鉄鉱石を少し"));
 				t.add(row("gravel", c -> !hasIgniter(c) && !c.has(Items.FLINT) && !c.ap.flintGaveUp(), "mine", c -> j("block", "gravel", "count", 3), 60 * 20, "火打石用の砂利"));
+				// 受け皿1: 近くの探索を全部試し終えたら、範囲を広げてもう一度だけ探す
+				t.add(once("village_wide", "village_wide_tried", c -> c.overworld() && exploredAll(c) && ironNeed(c) > 0, "find_structure", c -> j("type", "village", "radius", 32), 20 * 360, "遠くの村を探す"));
+				t.add(once("village_wide_loot", "village_wide_looted", c -> c.ap.flag("village_wide_tried") && near(c, "village", 64), "loot_chests", c -> j("radius", 40), 20 * 120, "村のチェスト"));
+				t.add(once("ruin_wide", "ruin_wide_tried", c -> c.overworld() && exploredAll(c) && ironNeed(c) > 0, "find_structure", c -> j("type", "ruined_portal", "radius", 24), 20 * 300, "遠くの廃ポータルを探す"));
+				t.add(once("ruin_wide_loot", "ruin_wide_looted", c -> c.ap.flag("ruin_wide_tried") && near(c, RunSkills.MARK_RUIN, 20), "loot_chests", c -> j("radius", 16), 20 * 60, "廃ポータルのチェスト"));
+				// 受け皿2: それでも足りなければ、目的のある鉄掘り（バケツ2・火打石に要る数だけ。掘れない所は MineSkill のブラックリストと行のクールダウンで飛ばす）
+				t.add(row("iron_dig", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c) && exploredAll(c) && c.ap.flag("village_wide_tried") && c.ap.flag("ruin_wide_tried"), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 180, "必要な分だけ鉄を掘る"));
+				t.add(row("furnace_cobble2", c -> c.n(Items.RAW_IRON) > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
 			}
 			case FOOD -> {
 				t.add(row("cook_fuel", c -> c.raw() > 0 && !c.fuel(), "mine", c -> j("block", "log", "count", 2), 60 * 20, "焼く燃料"));
@@ -229,6 +239,24 @@ final class Plan {
 	static int ironNeed(Ctx c) {
 		int buckets = c.n(Items.OBSIDIAN) >= 10 ? 0 : Math.max(0, 2 - c.buckets()) * 3;
 		return buckets + (hasIgniter(c) ? 0 : 1);
+	}
+
+	/** 序盤の近場の探索（宝・沈没船・村・廃ポータル）を全部試したか。 */
+	static boolean exploredAll(Ctx c) {
+		return c.ap.flag("village_tried") && c.ap.flag("ruin_tried") && (c.ap.flag("shipwreck_tried") || !c.ap.oceanNear(c))
+				&& (c.ap.flag("treasure_tried") || !c.has(Items.FILLED_MAP));
+	}
+
+	/**
+	 * 置いた作業台が48ブロックより遠い・壊れたときは、新しく作って置く（遠くまで戻らない）。
+	 * extra は台のあとに作る物の板材（木のツルハシなら3）。
+	 */
+	private static void addNewTable(List<Row> t, int extra) {
+		Predicate<Ctx> noTable = c -> !c.tableNear(48);
+		t.add(row("new_table_place", c -> noTable.test(c) && c.has(Items.CRAFTING_TABLE), "place_table", c -> new JsonObject(), 20 * 10, "作業台を置く"));
+		t.add(row("new_table_craft", c -> noTable.test(c) && !c.has(Items.CRAFTING_TABLE) && c.planks() >= 4 + extra, "craft", c -> j("item", "crafting_table", "count", 1), 20, "作業台を作り直す"));
+		t.add(row("new_table_planks", c -> noTable.test(c) && !c.has(Items.CRAFTING_TABLE) && c.planks() < 4 + extra && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", Math.min(c.logs(), 2) * 4), 20, "作業台用の板材"));
+		t.add(row("new_table_log", c -> noTable.test(c) && !c.has(Items.CRAFTING_TABLE) && c.planks() < 4 + extra && c.logs() == 0, "mine", c -> j("block", "log", "count", 2), 20 * 60, "作業台用の原木"));
 	}
 
 	/** mark が近くにあるか。 */

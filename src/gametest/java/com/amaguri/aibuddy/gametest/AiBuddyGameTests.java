@@ -31,6 +31,8 @@ public class AiBuddyGameTests {
 	private static final int STAND = FLOOR + 1;
 	/** 速度テスト専用の高さ（他テストの舞台と重ならない） */
 	private static final int SPEED_FLOOR = 60;
+	/** スタート待ちテスト専用の高さ */
+	private static final int START_FLOOR = 100;
 	private static final int LEN = 48;
 	private static final int WID = 9;
 
@@ -285,12 +287,24 @@ public class AiBuddyGameTests {
 
 	@GameTest(maxTicks = 1200)
 	public void waitsForStartThenLogsToCraftingTable(GameTestHelper h) {
-		buildArena(h);
-		for (int x : new int[] { 12, 16 }) {
-			h.setBlock(x, STAND, 4, Blocks.OAK_LOG);
-			h.setBlock(x, STAND + 1, 4, Blocks.OAK_LOG);
+		// 専用の高さに舞台を作る（FLOOR=20 の舞台は隣のテストと重なり、置いた原木が隣の舞台の空気で消されることがあった）。
+		// 床の下も3段埋める（1段の床を掘り抜くと20ブロック落ちて死ぬのはテスト舞台だけの事故）。
+		final int floor = START_FLOOR;
+		final int stand = floor + 1;
+		buildArena(h, floor);
+		for (int x = 0; x < LEN; x++) {
+			for (int z = 0; z < WID; z++) {
+				for (int y = 1; y <= 3; y++) {
+					h.setBlock(x, floor - y, z, Blocks.STONE);
+				}
+			}
 		}
-		FakeMember m = summon(h, 4.5f, 4.5f, true); // 自動進行は既定のまま（スタート待ち）
+		// 原木は自分の区画（x<8）の中に3本＋予備1本
+		h.setBlock(6, stand, 2, Blocks.OAK_LOG);
+		h.setBlock(6, stand + 1, 2, Blocks.OAK_LOG);
+		h.setBlock(6, stand, 6, Blocks.OAK_LOG);
+		h.setBlock(6, stand + 1, 6, Blocks.OAK_LOG);
+		FakeMember m = summon(h, 2.5f, 4.5f, true, floor); // 自動進行は既定のまま（スタート待ち）
 		m.autopilot().setFastForwardAllowed(false); // 人のいないテスト世界で早送りしない
 		var st = new Object() {
 			boolean started;
@@ -303,7 +317,7 @@ public class AiBuddyGameTests {
 				}
 				h.assertTrue(!m.autopilot().isStarted(), "召喚直後はスタート待ちのはず");
 				h.assertTrue(m.getInventory().isEmpty(), "スタート前に物を集めている");
-				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(12, STAND, 4)).is(Blocks.OAK_LOG),
+				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(6, stand, 2)).is(Blocks.OAK_LOG),
 						"スタート前に原木を掘っている");
 				m.autopilot().start();
 				m.autopilot().start(); // 2回目は何もしない（冪等）
@@ -321,18 +335,25 @@ public class AiBuddyGameTests {
 				}
 				System.out.println("[starttest] t=" + now + " stage=" + m.autopilot().stageName() + " goal=" + m.autopilot().goalText()
 						+ " status=" + m.skills().status() + " last=" + m.skills().lastResult() + " inv=[" + inv + "] rel=" + rel(h, m)
-						+ " hand=" + m.getMainHandItem() + " log12=" + h.getBlockState(new net.minecraft.core.BlockPos(12, STAND, 4))
+						+ " hand=" + m.getMainHandItem() + " log62=" + h.getBlockState(new net.minecraft.core.BlockPos(6, stand, 2)) + " alive=" + m.isAlive()
 						+ " line=" + m.autopilot().statusLine());
 			}
-			if (hasPlacedTable(h)) {
+			if (!m.isAlive()) {
+				h.fail("メンバーが死んだ（status=" + m.skills().status() + "）");
+			}
+			if (hasPlacedTable(h, stand)) {
 				h.succeed();
 			}
 		});
 	}
 
 	private static boolean hasPlacedTable(GameTestHelper h) {
+		return hasPlacedTable(h, STAND);
+	}
+
+	private static boolean hasPlacedTable(GameTestHelper h, int stand) {
 		for (int x = 1; x < LEN - 1; x++) {
-			for (int y = STAND; y < STAND + 4; y++) {
+			for (int y = stand; y < stand + 4; y++) {
 				for (int z = 1; z < WID - 1; z++) {
 					if (h.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(Blocks.CRAFTING_TABLE)) {
 						return true;
