@@ -20,16 +20,34 @@ import com.amaguri.aibuddy.entity.ModEntities;
 
 /**
  * 実機で言われた不満（最初から強い・歩きが遅い・素手でも掘れる）を二度と起こさないためのサーバー gametest。
- * 舞台は arena.snbt（48x6x9、床は土、周りはガラス）。座標はすべて GameTestHelper の相対座標。
+ * 舞台は buildArena（48x6x9、床は土、周りはガラス）。座標はすべて GameTestHelper の相対座標。
  * 実行: ./gradlew runGameTest
  */
 public class AiBuddyGameTests {
-	private static final String ARENA = "aibuddy:arena";
+	// 構造物ファイルは使わず（既定の空構造物 8x8x8）、テスト内で上空 y=20 に 48x6x9 の舞台を setBlock で作る。
+	// 高さをずらすのは、横に並ぶ他テストの舞台と重ならないため。
+	private static final int FLOOR = 20;
+	private static final int STAND = FLOOR + 1;
+	private static final int LEN = 48;
+	private static final int WID = 9;
+
+	/** 床は土、周りと天井はガラス、中は空気。 */
+	private static void buildArena(GameTestHelper h) {
+		for (int x = 0; x < LEN; x++) {
+			for (int y = 0; y < 6; y++) {
+				for (int z = 0; z < WID; z++) {
+					boolean edge = x == 0 || x == LEN - 1 || z == 0 || z == WID - 1 || y == 5;
+					net.minecraft.world.level.block.Block b = y == 0 ? Blocks.DIRT : edge ? Blocks.GLASS : Blocks.AIR;
+					h.setBlock(x, FLOOR + y, z, b);
+				}
+			}
+		}
+	}
 
 	// ---- helpers ----
 
 	private static FakeMember summon(GameTestHelper h, float x, float z, boolean autopilot) {
-		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, x, 1f, z);
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, x, (float) STAND, z);
 		if (!autopilot) {
 			// 指示なしで勝手に動く Autopilot を止め、スキルだけを試す。
 			// UNVERIFIED: FakeMember.autopilot() / Autopilot.setEnabled(boolean) は CONTRACT W3 の署名。まだ実装が無いかもしれない
@@ -85,8 +103,9 @@ public class AiBuddyGameTests {
 
 	// ---- (1) 召喚直後の持ち物が空 ----
 
-	@GameTest(structure = ARENA, maxTicks = 80)
+	@GameTest(maxTicks = 80)
 	public void summonedMemberHasEmptyInventory(GameTestHelper h) {
+		buildArena(h);
 		FakeMember m = summon(h, 4.5f, 4.5f, true); // Autopilot は既定のまま（召喚直後は on）
 		h.runAfterDelay(40, () -> {
 			h.assertTrue(m.getInventory().isEmpty(), "召喚直後・40tick後でも持ち物が空であること");
@@ -104,11 +123,12 @@ public class AiBuddyGameTests {
 
 	private enum Phase { BARE_START, BARE_WAIT, PICK_START, PICK_WAIT }
 
-	@GameTest(structure = ARENA, maxTicks = 900)
+	@GameTest(maxTicks = 900)
 	public void mineStoneBareHandsVsWoodenPickaxe(GameTestHelper h) {
 		final int bareX = 8;
 		final int pickX = 8;
-		h.setBlock(bareX, 1, 4, Blocks.STONE);
+		buildArena(h);
+		h.setBlock(bareX, STAND, 4, Blocks.STONE);
 		FakeMember m = summon(h, 3.5f, 4.5f, false);
 		var st = new Object() {
 			Phase phase = Phase.BARE_START;
@@ -123,14 +143,14 @@ public class AiBuddyGameTests {
 					st.phase = Phase.BARE_WAIT;
 					if (refused(r)) {
 						// 素手では掘らない実装でもよい（速く・タダで掘れなければ目的は満たす）。次へ。
-						h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(bareX, 1, 4)).is(Blocks.STONE),
+						h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(bareX, STAND, 4)).is(Blocks.STONE),
 								"断ったのに石が消えている: " + r);
 						st.phase = Phase.PICK_START;
 					}
 				}
 				case BARE_WAIT -> {
 					long el = now - st.startedAt;
-					boolean gone = !h.getBlockState(new net.minecraft.core.BlockPos(bareX, 1, 4)).is(Blocks.STONE);
+					boolean gone = !h.getBlockState(new net.minecraft.core.BlockPos(bareX, STAND, 4)).is(Blocks.STONE);
 					// バニラの素手は石に約150tick。歩く時間を差し引いても90tick未満で壊れたら速すぎ。
 					if (gone && el < 90) {
 						h.fail("素手で石が " + el + " tick で壊れた（速すぎ。バニラは約150tick）");
@@ -144,7 +164,7 @@ public class AiBuddyGameTests {
 				}
 				case PICK_START -> {
 					m.getInventory().addItem(new ItemStack(Items.WOODEN_PICKAXE));
-					h.setBlock(pickX, 1, 4, Blocks.STONE);
+					h.setBlock(pickX, STAND, 4, Blocks.STONE);
 					String r = m.skills().start("mine", json("block", "stone", "count", 1));
 					h.assertTrue(!refused(r), "木のツルハシ持ちで mine が始まらない: " + r);
 					st.startedAt = now;
@@ -165,12 +185,13 @@ public class AiBuddyGameTests {
 
 	// ---- (3) 平らな40ブロックでダッシュ速度 5〜7.5 ブロック/秒 ----
 
-	@GameTest(structure = ARENA, maxTicks = 500)
+	@GameTest(maxTicks = 500)
 	public void sprintSpeedOnFlatGround(GameTestHelper h) {
 		final double startX = 2.5;
 		final double targetX = 42.5;
+		buildArena(h);
 		FakeMember m = summon(h, (float) startX, 4.5f, false);
-		Vec3 target = h.absoluteVec(new Vec3(targetX, 1, 4.5));
+		Vec3 target = h.absoluteVec(new Vec3(targetX, STAND, 4.5));
 		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
 		var st = new Object() {
@@ -196,8 +217,9 @@ public class AiBuddyGameTests {
 
 	// ---- (4) 原木4から 作業台 と 木のツルハシ を作れる ----
 
-	@GameTest(structure = ARENA, maxTicks = 400)
+	@GameTest(maxTicks = 400)
 	public void craftTableAndWoodenPickaxeFromFourLogs(GameTestHelper h) {
+		buildArena(h);
 		FakeMember m = summon(h, 4.5f, 4.5f, false);
 		m.getInventory().addItem(new ItemStack(Items.OAK_LOG, 4));
 		var st = new Object() {
@@ -232,10 +254,9 @@ public class AiBuddyGameTests {
 	}
 
 	private static boolean hasPlacedTable(GameTestHelper h) {
-		var b = h.getRelativeBounds();
-		for (int x = (int) b.minX; x < b.maxX; x++) {
-			for (int y = 1; y < 4; y++) {
-				for (int z = (int) b.minZ; z < b.maxZ; z++) {
+		for (int x = 1; x < LEN - 1; x++) {
+			for (int y = STAND; y < STAND + 4; y++) {
+				for (int z = 1; z < WID - 1; z++) {
 					if (h.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(Blocks.CRAFTING_TABLE)) {
 						return true;
 					}
