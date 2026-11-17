@@ -22,7 +22,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /** 周囲の要約（200字程度）。 */
-final class Observer {
+public final class Observer {
 	private Observer() {
 	}
 
