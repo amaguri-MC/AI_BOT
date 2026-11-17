@@ -65,6 +65,7 @@ final class MineSkill extends Skill {
 	/** 今の目標を選んでから、掘り始められないまま経過した tick（10秒で諦める）。 */
 	private int reachTicks;
 	private boolean extraOre;
+	private boolean lootDig;
 	private int reachLimit = 200;
 
 	private void ban(BlockPos p) {
@@ -367,6 +368,7 @@ final class MineSkill extends Skill {
 				extraOre = false;
 				lastMined = target;
 				lootTicks = 0;
+				lootDig = false;
 				state = State.LOOT;
 			}
 		} else if (r == Digger.ABORTED) {
@@ -384,12 +386,30 @@ final class MineSkill extends Skill {
 	private void loot() {
 		lootTicks++;
 		List<ItemEntity> items = SkillUtil.items(o, 7);
-		if (!items.isEmpty() && lootTicks < 80) {
+		if (!items.isEmpty() && lootTicks < 400) {
+			ItemEntity it = items.get(0);
+			if (lootDig) {
+				// 落ちた物が壁の中の穴に閉じ込められている: 間の壁を掘って近づく
+				if (digger.active()) {
+					int r = digger.tick();
+					if (r == Digger.BROKEN || r == Digger.ABORTED) {
+						lootDig = false;
+					}
+					return;
+				}
+				Vec3 eye = o.getEyePosition();
+				BlockHitResult hit = SkillUtil.level(o).clip(new ClipContext(eye, it.position(), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, o));
+				if (hit.getType() == HitResult.Type.BLOCK && digger.begin(hit.getBlockPos())) {
+					return;
+				}
+				lootDig = false;
+			}
 			nav.setVertTol(3.0);
-			nav.go(items.get(0).position(), 0.6, 1.2);
+			nav.go(it.position(), 0.6, 1.2);
 			nav.tick();
 			if (nav.failed()) {
-				lootTicks = 80;
+				nav.stop();
+				lootDig = true;
 			}
 			return;
 		}
