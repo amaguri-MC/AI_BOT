@@ -178,7 +178,7 @@ final class Observer {
 		return t < 23000 ? "夜" : "明け方";
 	}
 
-	static String dimText(ServerLevel l) {
+	public static String dimText(ServerLevel l) {
 		if (l.dimension().equals(Level.NETHER)) {
 			return "ネザー";
 		}

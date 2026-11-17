@@ -198,6 +198,18 @@ public class FakeMember extends PathfinderMob {
 		AiBuddyMod.LOGGER.info("[chat] {}", line);
 	}
 
+	/** 次元移動で作り直されたとき、未処理の出来事を引き継ぎ、移動を報告する。 */
+	@Override
+	public void restoreFrom(net.minecraft.world.entity.Entity old) {
+		super.restoreFrom(old);
+		if (old instanceof FakeMember prev) {
+			events.addAll(prev.drainEvents());
+			if (this.level() instanceof net.minecraft.server.level.ServerLevel sl && !prev.level().dimension().equals(sl.dimension())) {
+				postEvent(com.amaguri.aibuddy.skill.Observer.dimText(sl) + "に移動した");
+			}
+		}
+	}
+
 	public void postEvent(String text) {
 		if (text == null || text.isBlank()) {
 			return;
