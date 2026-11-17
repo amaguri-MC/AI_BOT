@@ -299,13 +299,17 @@ final class Nav {
 			// 直進中も毎tick 1〜2ブロック先の床を見直し、崖（落差2超）・溶岩なら即やめる
 			if (!flatNear(gt.x - o.getX(), gt.z - o.getZ())) {
 				directTicks = 0;
+				nav.stop();
+				o.setSprinting(false);
+				o.setDeltaMovement(0, o.getDeltaMovement().y, 0);
 				o.getMoveControl().setWantedPosition(o.getX(), o.getY(), o.getZ(), 0);
+			} else {
+				o.getMoveControl().setWantedPosition(gt.x, gt.y, gt.z, mod);
+				if (o.onGround() && gt.y > o.getY() + 0.6) {
+					o.getJumpControl().jump();
+				}
+				o.setSprinting(dash);
 			}
-			o.getMoveControl().setWantedPosition(gt.x, gt.y, gt.z, mod);
-			if (o.onGround() && gt.y > o.getY() + 0.6) {
-				o.getJumpControl().jump();
-			}
-			o.setSprinting(dash);
 			sinceRepath = REPATH_MIN_TICKS;
 		} else if (wantNew) {
 			issueSegment(nav, mod);
