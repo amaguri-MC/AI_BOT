@@ -888,7 +888,6 @@ public class AiBuddyGameTests {
 			}
 		}
 		FakeMember m = summon(h, 12.5f, 4.5f, false, floor);
-		m.addTag("lavatrace"); // TRACE
 		m.getInventory().addItem(new ItemStack(Items.DIAMOND_SWORD)); // ブロックは持たない: 走って逃げるしかない
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
@@ -907,10 +906,6 @@ public class AiBuddyGameTests {
 				if (z.isAlive()) {
 					z.setTarget(m);
 				}
-			}
-			if (t <= 200) {
-				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
-						+ " spr=" + m.isSprinting() + " yaw=" + m.getYRot() + " z0=" + h.relativeVec(zs.get(0).position()) + " z1=" + h.relativeVec(zs.get(1).position()) + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
 			}
 			h.assertTrue(m.isAlive() && !m.isInLava() && !m.isOnFire(), "溶岩に落ちた/死んだ rel=" + rel(h, m) + " hp=" + m.getHealth());
 			if (t >= 200) {

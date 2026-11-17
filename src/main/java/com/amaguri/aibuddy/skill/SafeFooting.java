@@ -118,7 +118,6 @@ public final class SafeFooting {
 			if (toward > 0 && o.onGround()) {
 				o.setDeltaMovement(v.x - wx * toward, v.y, v.z - wz * toward);
 			}
-			SafeFooting.blocked(o, wx, wz);
 		}
 	}
 
@@ -155,12 +154,5 @@ public final class SafeFooting {
 			}
 		}
 		return true;
-	}
-
-	/** 関門が止めた時の記録（調査用。TRACE） */
-	static void blocked(FakeMember o, double wx, double wz) {
-		if (o.entityTags().contains("lavatrace")) {
-			Combat.state(o).gate += " GATE(" + String.format("%.2f,%.2f", wx, wz) + ")";
-		}
 	}
 }
