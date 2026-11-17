@@ -311,6 +311,19 @@ public class AiBuddyGameTests {
 				st.started = true;
 				return;
 			}
+			if (now % 20 == 0) {
+				StringBuilder inv = new StringBuilder();
+				for (int i = 0; i < m.getInventory().getContainerSize(); i++) {
+					ItemStack s = m.getInventory().getItem(i);
+					if (!s.isEmpty()) {
+						inv.append(s.getItem()).append('x').append(s.getCount()).append(' ');
+					}
+				}
+				System.out.println("[starttest] t=" + now + " stage=" + m.autopilot().stageName() + " goal=" + m.autopilot().goalText()
+						+ " status=" + m.skills().status() + " last=" + m.skills().lastResult() + " inv=[" + inv + "] rel=" + rel(h, m)
+						+ " hand=" + m.getMainHandItem() + " log12=" + h.getBlockState(new net.minecraft.core.BlockPos(12, STAND, 4))
+						+ " line=" + m.autopilot().statusLine());
+			}
 			if (hasPlacedTable(h)) {
 				h.succeed();
 			}
