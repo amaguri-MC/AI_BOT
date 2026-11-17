@@ -55,6 +55,8 @@ public final class RunSkills {
 	public static final String MARK_STRONGHOLD = "stronghold";
 	public static final String MARK_FRAME = "frame";
 	public static final String MARK_RUIN = "ruined_portal";
+	public static final String MARK_TABLE = "table";
+	public static final String MARK_TREASURE = "buried_treasure";
 
 	private RunSkills() {
 	}
@@ -66,11 +68,13 @@ public final class RunSkills {
 		return switch (name) {
 			case "collect_items" -> new CollectSkill(o, r);
 			case "emote" -> new EmoteSkill(o, r, SkillRunner.str(in, "kind"));
-			case "find_structure" -> new StructureSkill(o, r, SkillRunner.str(in, "type"));
+			case "find_structure" -> new StructureSkill(o, r, SkillRunner.str(in, "type"), intOr(in, "radius", 0));
 			case "build_nether_portal" -> new PortalSkill(o, r);
 			case "fill_water" -> new FillWater(o, r);
 			case "enter_portal" -> new EnterPortal(o, r, optPos(in));
-			case "loot_chests" -> new LootChests(o, r);
+			case "loot_chests" -> new LootChests(o, r, intOr(in, "radius", 16));
+			case "place_table" -> new PlaceTable(o, r);
+			case "dig_treasure" -> new DigTreasure(o, r);
 			case "locate_stronghold" -> new LocateStronghold(o, r);
 			case "fill_end_portal" -> new FillEndPortal(o, r);
 			default -> null;
@@ -79,6 +83,10 @@ public final class RunSkills {
 
 	/** 脳には渡さないので空。 */
 	static void specs(JsonArray out) {
+	}
+
+	private static int intOr(JsonObject in, String k, int def) {
+		return in.has(k) && !in.get(k).isJsonNull() ? (int) in.get(k).getAsDouble() : def;
 	}
 
 	private static BlockPos optPos(JsonObject in) {
@@ -308,6 +316,131 @@ public final class RunSkills {
 	// スキル
 	// =====================================================================
 
+	/** 持っている作業台を足元の横に置いて覚える（作業台はここで使う）。 */
+	static final class PlaceTable extends Skill {
+		PlaceTable(FakeMember o, SkillRunner r) {
+			super(o, r);
+		}
+
+		@Override
+		String begin() {
+			if (Inv.count(o, Items.CRAFTING_TABLE) <= 0) {
+				return "できない: 材料不足 作業台×1";
+			}
+			return null;
+		}
+
+		@Override
+		void tick() {
+			ServerLevel l = SkillUtil.level(o);
+			BlockPos me = o.blockPosition();
+			Direction face = Direction.fromYRot(o.getYRot());
+			List<Direction> order = new ArrayList<>(List.of(face, face.getClockWise(), face.getCounterClockWise(), face.getOpposite()));
+			for (Direction d : order) {
+				BlockPos p = me.relative(d);
+				if (l.getBlockState(p).canBeReplaced() && l.getBlockState(p).getFluidState().isEmpty()
+						&& l.getBlockState(p.below()).blocksMotion()) {
+					Inv.equip(o, stackOf(o, Items.CRAFTING_TABLE));
+					SkillUtil.lookAt(o, Vec3.atCenterOf(p));
+					SkillUtil.swing(o);
+					Inv.remove(o, Items.CRAFTING_TABLE, 1);
+					BlockState t = Blocks.CRAFTING_TABLE.defaultBlockState();
+					l.setBlock(p, t, 3);
+					l.playSound(null, p, t.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 1.0f, 0.8f);
+					runner.setMark(MARK_TABLE, p);
+					finish("作業台を置いた " + SkillUtil.pos(p), null);
+					return;
+				}
+			}
+			finish("できない: 作業台を置く場所が無い", null);
+		}
+
+		@Override
+		String status() {
+			return "作業台を置いている";
+		}
+	}
+
+	/** 宝の地図の場所（StructureSkill で着いた所）で、埋まったチェストの真上を掘って開ける。 */
+	static final class DigTreasure extends Skill {
+		private BlockPos chest;
+		private int ticks;
+		private int y;
+
+		DigTreasure(FakeMember o, SkillRunner r) {
+			super(o, r);
+		}
+
+		@Override
+		String begin() {
+			ServerLevel l = SkillUtil.level(o);
+			BlockPos m = runner.mark(MARK_TREASURE);
+			BlockPos c = m == null ? o.blockPosition() : new BlockPos(m.getX(), o.blockPosition().getY(), m.getZ());
+			chest = nearestBlock(l, c, Blocks.CHEST, 10, 16, 4);
+			if (chest == null) {
+				return "できない: 宝のチェストが見つからない";
+			}
+			y = l.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, chest.getX(), chest.getZ()) - 1;
+			return null;
+		}
+
+		@Override
+		void tick() {
+			ticks++;
+			ServerLevel l = SkillUtil.level(o);
+			if (ticks > 20 * 80) {
+				finish("できない: 宝まで掘れない", null);
+				return;
+			}
+			if (digger.active()) {
+				if (digger.tick() == Digger.PROGRESS) {
+					return;
+				}
+			}
+			// 上から順に、チェストの真上の柱を掘る
+			while (y > chest.getY() && (l.getBlockState(new BlockPos(chest.getX(), y, chest.getZ())).isAir()
+					|| !l.getBlockState(new BlockPos(chest.getX(), y, chest.getZ())).getFluidState().isEmpty())) {
+				y--;
+			}
+			Vec3 target = Vec3.atCenterOf(y > chest.getY() ? new BlockPos(chest.getX(), y, chest.getZ()) : chest);
+			if (o.getEyePosition().distanceToSqr(target) > 4.3 * 4.3) {
+				nav.go(Vec3.atBottomCenterOf(new BlockPos(chest.getX(), Math.max(y, chest.getY()) + 1, chest.getZ())), 1.5, 1.0);
+				nav.setVertTol(6.0);
+				nav.tick();
+				return;
+			}
+			nav.stop();
+			if (y > chest.getY()) {
+				if (!digger.begin(new BlockPos(chest.getX(), y, chest.getZ()))) {
+					y--;
+				}
+				return;
+			}
+			BlockEntity be = l.getBlockEntity(chest);
+			int got = 0;
+			if (be instanceof RandomizableContainer rc) {
+				SkillUtil.lookAt(o, target);
+				SkillUtil.swing(o);
+				rc.unpackLootTable(null); // UNVERIFIED: プレイヤー無しで中身を生成（LootChests と同じ）
+				for (int i = 0; i < rc.getContainerSize(); i++) {
+					ItemStack st = rc.removeItemNoUpdate(i);
+					if (!st.isEmpty()) {
+						got += st.getCount();
+						Inv.add(o, st);
+					}
+				}
+				rc.setChanged();
+				l.playSound(null, chest, SoundEvents.CHEST_OPEN, SoundSource.BLOCKS, 0.6f, 1.0f);
+			}
+			finish("埋もれた宝を開けた（" + got + "個）", "埋もれた宝を掘り当てた（" + got + "個）");
+		}
+
+		@Override
+		String status() {
+			return "埋もれた宝を掘っている";
+		}
+	}
+
 	/** 空のバケツで近くの水を汲む。 */
 	static final class FillWater extends Skill {
 		private BlockPos water;
@@ -478,14 +611,16 @@ public final class RunSkills {
 		}
 	}
 
-	/** 近く（または覚えている廃ポータル）のチェストを開けて中身をもらう。 */
+	/** 近くのチェスト・樽（構造物の戦利品入り）を開けて中身をもらう。radius は探す半径（村なら広く）。 */
 	static final class LootChests extends Skill {
 		private final List<BlockPos> chests = new ArrayList<>();
+		private final int radius;
 		private int ticks;
 		private int got;
 
-		LootChests(FakeMember o, SkillRunner r) {
+		LootChests(FakeMember o, SkillRunner r, int radius) {
 			super(o, r);
+			this.radius = Math.max(4, Math.min(48, radius));
 		}
 
 		@Override
@@ -493,11 +628,16 @@ public final class RunSkills {
 			ServerLevel l = SkillUtil.level(o);
 			BlockPos c = o.blockPosition();
 			BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-			for (int dx = -16; dx <= 16; dx++) {
-				for (int dz = -16; dz <= 16; dz++) {
-					for (int dy = -8; dy <= 8; dy++) {
+			int dyR = radius > 16 ? 12 : 8;
+			for (int dx = -radius; dx <= radius; dx++) {
+				for (int dz = -radius; dz <= radius; dz++) {
+					if (!l.hasChunkAt(m.set(c.getX() + dx, c.getY(), c.getZ() + dz))) {
+						continue;
+					}
+					for (int dy = -dyR; dy <= dyR; dy++) {
 						m.set(c.getX() + dx, c.getY() + dy, c.getZ() + dz);
-						if (l.hasChunkAt(m) && l.getBlockState(m).is(Blocks.CHEST) && l.getBlockEntity(m) instanceof RandomizableContainer) {
+						BlockState bs = l.getBlockState(m);
+						if ((bs.is(Blocks.CHEST) || bs.is(Blocks.BARREL)) && l.getBlockEntity(m) instanceof RandomizableContainer) {
 							chests.add(m.immutable());
 						}
 					}

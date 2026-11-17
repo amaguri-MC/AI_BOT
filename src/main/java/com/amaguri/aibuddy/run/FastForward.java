@@ -280,12 +280,21 @@ final class FastForward {
 		boolean full = frac >= 0.999;
 		switch (s) {
 			case WOOD -> {
+				if (full) {
+					ensure(Items.OAK_LOG, 3);
+				}
+			}
+			case TABLE -> {
+				if (full && !c.tableNear(64) && c.pickTier() < 1) {
+					// 早送り中に作業台を置いたことにする（足元の横に本当に置く）
+					o.getInventory().removeItemType(Items.OAK_LOG, 1);
+					placeTableNow();
+				}
+			}
+			case WOODEN_PICK -> {
 				if (full && c.pickTier() < 1) {
 					add(Items.WOODEN_PICKAXE, 1);
-				}
-				if (full) {
-					ensure(Items.OAK_LOG, 2);
-					ensure(Items.STICK, 2);
+					o.getInventory().removeItemType(Items.OAK_LOG, 2);
 				}
 			}
 			case STONE -> {
@@ -296,30 +305,33 @@ final class FastForward {
 					if (c.axeTier() < 2) {
 						add(Items.STONE_AXE, 1);
 					}
-					if (c.swordTier() < 2) {
-						add(Items.STONE_SWORD, 1);
-					}
-					ensure(Items.COBBLESTONE, 8);
 				}
 			}
-			case IRON -> {
+			case MORE_WOOD -> {
 				if (full) {
-					if (c.buckets() < 2) {
+					ensure(Items.OAK_LOG, 5);
+				}
+			}
+			case LOOT -> {
+				if (full) {
+					if (c.buckets() < 2 && c.n(Items.OBSIDIAN) < 10) {
 						if (!c.has(Items.WATER_BUCKET)) {
 							add(Items.WATER_BUCKET, 1);
 						}
-						if (c.buckets() + (c.has(Items.WATER_BUCKET) ? 0 : 1) < 2) {
+						if (c.buckets() < 2) {
 							add(Items.BUCKET, 1);
 						}
 					}
-					ensure(Items.SHIELD, 1);
-					ensure(Items.FLINT_AND_STEEL, 1);
+					if (!Plan.hasIgniter(c)) {
+						add(Items.FLINT_AND_STEEL, 1);
+					}
+					ensure(Items.BREAD, 3); // 村・沈没船のチェストで拾うはずのパン
 				} else {
 					ensure(Items.IRON_INGOT, (int) Math.floor(Plan.ironNeed(c) * frac));
 				}
 			}
 			case FOOD -> {
-				int want = (int) Math.floor(8 * frac) - c.cooked();
+				int want = (int) Math.floor(6 * frac) - c.cooked();
 				if (want > 0) {
 					add(Items.COOKED_BEEF, want);
 				}
@@ -352,6 +364,19 @@ final class FastForward {
 			default -> {
 			}
 		}
+	}
+
+	private void placeTableNow() {
+		ServerLevel l = (ServerLevel) o.level();
+		for (net.minecraft.core.Direction d : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+			BlockPos p = o.blockPosition().relative(d);
+			if (l.getBlockState(p).isAir() && l.getBlockState(p.below()).blocksMotion()) {
+				l.setBlock(p, Blocks.CRAFTING_TABLE.defaultBlockState(), 3);
+				o.skills().setMark(RunSkills.MARK_TABLE, p);
+				return;
+			}
+		}
+		add(Items.CRAFTING_TABLE, 1);
 	}
 
 	private void ensure(Item item, int total) {

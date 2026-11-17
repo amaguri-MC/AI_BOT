@@ -94,9 +94,32 @@ final class Brain {
 	/** チャット/声を受け取る。near=半径内、called=名前を呼ばれた、fromBot=他のAIの発言、voice=声で聞こえた。 */
 	void onChat(int now, String name, String text, boolean near, boolean called, boolean fromBot, boolean voice) {
 		if (!near && !called) return;
+		// スタートの合図は LLM を待たずに即開始（近くのプレイヤーの声・チャットのみ。他のAIの発言では始めない）
+		if (!fromBot && near && isStartCue(text)) startRun();
 		chats.addLast(new Chat(now, name, text, voice));
 		while (chats.size() > MAX_CHATS) chats.removeFirst();
 		if (!fromBot || called) chatPending = true;
+	}
+
+	private static final String[] START_CUES = { "スタート", "すたーと", "始めよう", "はじめよう", "始めて", "はじめて", "はじめ",
+			"開始", "よーいどん", "よーい、どん", "よーいドン", "いくぞ", "行くぞ", "start" };
+
+	private static boolean isStartCue(String text) {
+		String t = text.toLowerCase(java.util.Locale.ROOT).replace("はじめまして", "").replace("初めまして", "");
+		for (String c : START_CUES) if (t.contains(c)) return true;
+		return false;
+	}
+
+	/** 自分で開始済みにした印。Autopilot 側の開始状態が公開されたらそちらを優先する。 */
+	private boolean started;
+
+	/** 開始済みなら何もしない。 */
+	private String startRun() {
+		if (started) return "もう始めている";
+		started = true;
+		// UNVERIFIED: Autopilot.start() は W3 が追加する public メソッド（署名どおり呼ぶ）。開始済みの判定は未公開なので Brain の印で代用
+		member.autopilot().start();
+		return "スタートした。自動進行を始めた";
 	}
 
 	// ---------------------------------------------------------------- tick
@@ -232,6 +255,7 @@ final class Brain {
 	private String buildUserText(int now, String trigger) {
 		SkillRunner sk = member.skills();
 		StringBuilder sb = new StringBuilder();
+		sb.append("進行状態: ").append(started ? "進行中" : "スタート待ち（合図があるまで体は動かない。雑談して待つ）").append('\n');
 		sb.append("今の段階: ").append(safe(() -> member.autopilot().stageName())).append('\n');
 		sb.append("目標: ").append(safe(() -> member.autopilot().goalText())).append('\n');
 		sb.append("状況: ").append(safe(sk::observe)).append('\n');
@@ -273,7 +297,7 @@ final class Brain {
 		}
 	}
 
-	/** 脳が使うツールは4つだけ（say / wait / follow_player / resume_run）。毎回同じ内容にしてキャッシュを効かせる。 */
+	/** 脳が使うツールは5つだけ（say / wait / start_run / follow_player / resume_run）。毎回同じ内容にしてキャッシュを効かせる。 */
 	static JsonArray buildTools() {
 		JsonArray tools = new JsonArray();
 
@@ -304,6 +328,12 @@ final class Brain {
 		fp.add("player", player);
 		follow.add("input_schema", schema(fp));
 		tools.add(follow);
+
+		JsonObject startT = new JsonObject();
+		startT.addProperty("name", "start_run");
+		startT.addProperty("description", "スタート待ちのとき、プレイヤーが開始を頼んだら呼ぶ。自動進行（エンドラ討伐までの攻略）が始まる。");
+		startT.add("input_schema", schema(new JsonObject()));
+		tools.add(startT);
 
 		JsonObject resume = new JsonObject();
 		resume.addProperty("name", "resume_run");
@@ -400,6 +430,9 @@ final class Brain {
 						return r;
 					}
 					return r == null ? "ついていく（60秒）" : r;
+				}
+				case "start_run" -> {
+					return startRun();
 				}
 				case "resume_run" -> {
 					member.skills().stop();

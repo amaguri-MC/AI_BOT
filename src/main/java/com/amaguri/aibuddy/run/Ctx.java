@@ -192,6 +192,41 @@ final class Ctx {
 		return r.mark(k);
 	}
 
+	/** 置いた作業台（mark "table"）が r ブロック内に残っているか。 */
+	boolean tableNear(double r) {
+		BlockPos t = mark(com.amaguri.aibuddy.skill.RunSkills.MARK_TABLE);
+		if (t == null || !l.hasChunkAt(t) || !l.getBlockState(t).is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)) {
+			return false;
+		}
+		return o.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(t)) <= r;
+	}
+
+	/** 半径 r に「見えている」（空気に面した）鉄鉱石があるか。 */
+	boolean exposedIron(int r) {
+		BlockPos c = o.blockPosition();
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (int dx = -r; dx <= r; dx++) {
+			for (int dz = -r; dz <= r; dz++) {
+				for (int dy = -8; dy <= 8; dy++) {
+					m.set(c.getX() + dx, c.getY() + dy, c.getZ() + dz);
+					if (!l.hasChunkAt(m)) {
+						continue;
+					}
+					var st = l.getBlockState(m);
+					if (!st.is(net.minecraft.world.level.block.Blocks.IRON_ORE) && !st.is(net.minecraft.world.level.block.Blocks.DEEPSLATE_IRON_ORE)) {
+						continue;
+					}
+					for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
+						if (l.getBlockState(m.relative(d)).isAir()) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	double dist(BlockPos p) {
 		return p == null ? Double.MAX_VALUE : Math.sqrt(o.blockPosition().distSqr(p));
 	}

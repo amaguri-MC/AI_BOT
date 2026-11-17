@@ -149,7 +149,11 @@ public final class AiBuddyCommands {
 	private static int runEnable(CommandContext<CommandSourceStack> ctx, boolean on) {
 		List<FakeMember> members = allMembers(ctx.getSource().getServer());
 		for (FakeMember m : members) {
-			m.autopilot().setEnabled(on);
+			if (on) {
+				m.autopilot().start(); // スタート待ちを解く（開始済みなら何もしない）
+			} else {
+				m.autopilot().setEnabled(false);
+			}
 		}
 		final int n = members.size();
 		ctx.getSource().sendSuccess(() -> Component.translatableWithFallback(

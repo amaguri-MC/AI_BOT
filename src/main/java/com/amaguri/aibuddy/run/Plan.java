@@ -32,10 +32,13 @@ final class Plan {
 	/** 段階が終わったか。 */
 	static boolean done(Stage s, Ctx c) {
 		return switch (s) {
-			case WOOD -> c.pickTier() >= 1;
-			case STONE -> c.pickTier() >= 2 && c.axeTier() >= 2 && c.swordTier() >= 2;
-			case IRON -> c.buckets() >= 2 && c.has(Items.SHIELD) && (c.has(Items.FLINT_AND_STEEL) || c.ap.flintGaveUp());
-			case FOOD -> c.cooked() >= 8 || c.ap.foodGaveUp() && c.raw() == 0;
+			case WOOD -> c.logs() >= 3 || c.has(Items.CRAFTING_TABLE) || c.tableNear(64) || c.pickTier() >= 1;
+			case TABLE -> c.tableNear(64) || c.pickTier() >= 1;
+			case WOODEN_PICK -> c.pickTier() >= 1;
+			case STONE -> c.pickTier() >= 2 && c.axeTier() >= 2;
+			case MORE_WOOD -> c.logs() >= 5;
+			case LOOT -> (c.buckets() >= 2 || c.n(Items.OBSIDIAN) >= 10) && hasIgniter(c);
+			case FOOD -> c.cooked() >= 6 || c.ap.foodGaveUp() && c.raw() == 0;
 			case PORTAL -> c.nether();
 			case BLAZE -> c.blazeUnits() >= 14 || c.rods() >= 7;
 			case PEARLS -> c.pearls() + c.eyes() >= c.ap.eyesNeeded();
@@ -50,10 +53,11 @@ final class Plan {
 	/** 段階の進み具合（goalText 用）「4/7」など。無ければ空。 */
 	static String progress(Stage s, Ctx c) {
 		return switch (s) {
-			case WOOD -> "木材" + Math.min(c.woodUnits(), 14) + "/14";
-			case STONE -> "道具" + ((c.pickTier() >= 2 ? 1 : 0) + (c.axeTier() >= 2 ? 1 : 0) + (c.swordTier() >= 2 ? 1 : 0)) + "/3";
-			case IRON -> "鉄" + c.ingots() + "・バケツ" + c.buckets() + "/2";
-			case FOOD -> "焼いた食料" + c.cooked() + "/8";
+			case WOOD -> "原木" + Math.min(c.logs(), 3) + "/3";
+			case STONE -> "丸石" + Math.min(c.cobble(), 6) + "/6・道具" + ((c.pickTier() >= 2 ? 1 : 0) + (c.axeTier() >= 2 ? 1 : 0)) + "/2";
+			case MORE_WOOD -> "原木" + Math.min(c.logs(), 5) + "/5";
+			case LOOT -> "鉄" + c.ingots() + "・バケツ" + c.buckets() + "/2" + (hasIgniter(c) ? "・火打石あり" : "");
+			case FOOD -> "焼いた食料" + c.cooked() + "/6";
 			case BLAZE -> Math.min(7, (c.blazeUnits() + 1) / 2) + "/7";
 			case PEARLS -> Math.min(c.ap.eyesNeeded(), c.pearls() + c.eyes()) + "/" + c.ap.eyesNeeded();
 			case EYES -> c.eyes() + "/" + c.ap.eyesNeeded();
@@ -66,9 +70,14 @@ final class Plan {
 	static String doneEvent(Stage s, Ctx c) {
 		String at = " 座標 " + c.o.blockPosition().getX() + " " + c.o.blockPosition().getY() + " " + c.o.blockPosition().getZ();
 		return switch (s) {
-			case WOOD -> "木のツルハシできた";
-			case STONE -> "石ツール揃った";
-			case IRON -> "鉄の道具揃った（バケツ" + c.buckets() + "・盾" + (c.has(Items.FLINT_AND_STEEL) ? "・火打石" : "") + "）";
+			case WOOD -> "原木3本取った";
+			case TABLE -> "作業台置いた" + (c.mark(RunSkills.MARK_TABLE) == null ? "" : " 座標 " + c.mark(RunSkills.MARK_TABLE).getX() + " "
+					+ c.mark(RunSkills.MARK_TABLE).getY() + " " + c.mark(RunSkills.MARK_TABLE).getZ());
+			case WOODEN_PICK -> "木のツルハシ作った";
+			case STONE -> "石ツルハシと石斧作った";
+			case MORE_WOOD -> "原木を追加で集めた（" + c.logs() + "本）";
+			case LOOT -> "鉄の道具揃った（バケツ" + c.buckets() + (c.has(Items.FLINT_AND_STEEL) ? "・火打石と打ち金" : "")
+					+ (c.n(Items.OBSIDIAN) >= 10 ? "・黒曜石" + c.n(Items.OBSIDIAN) : "") + "）";
 			case FOOD -> "食料揃った（" + (c.cooked() + c.raw()) + "個）";
 			case PORTAL -> "ネザーに入った" + at;
 			case BLAZE -> "ブレイズロッド集まった（" + c.rods() + "本）";
@@ -87,50 +96,67 @@ final class Plan {
 		List<Row> t = new ArrayList<>();
 		switch (s) {
 			case WOOD -> {
-				t.add(row("log", c -> c.woodUnits() < 14, "mine", c -> j("block", "log", "count", Math.max(1, (int) Math.ceil((14 - c.woodUnits()) / 4.0))), 60, "原木を集める"));
-				t.add(row("planks", c -> c.planks() < 9 && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", Math.min(c.logs(), 3) * 4), 20, "板材を作る"));
-				t.add(row("sticks", c -> c.sticks() < 2 && c.planks() >= 2, "craft", c -> j("item", "stick", "count", 4), 20, "棒を作る"));
-				t.add(row("wpick", c -> c.planks() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "wooden_pickaxe", "count", 1), 30, "木のツルハシを作る"));
+				t.add(row("log", c -> c.logs() < 3, "mine", c -> j("block", "log", "count", 3 - c.logs()), 20 * 60, "原木を3本"));
+			}
+			case TABLE -> {
+				t.add(row("planks", c -> !c.has(Items.CRAFTING_TABLE) && c.planks() < 4 && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", 4), 20, "板材"));
+				t.add(row("craft_table", c -> !c.has(Items.CRAFTING_TABLE) && c.planks() >= 4, "craft", c -> j("item", "crafting_table", "count", 1), 20, "作業台を作る"));
+				t.add(row("place_table", c -> c.has(Items.CRAFTING_TABLE), "place_table", c -> new JsonObject(), 20 * 10, "作業台を置く"));
+				t.add(row("log", c -> c.logs() == 0 && c.planks() < 4 && !c.has(Items.CRAFTING_TABLE), "mine", c -> j("block", "log", "count", 1), 20 * 60, "原木"));
+			}
+			case WOODEN_PICK -> {
+				t.add(row("planks", c -> c.planks() < 3 + (c.sticks() < 2 ? 2 : 0) && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", Math.min(c.logs(), 2) * 4), 20, "板材"));
+				t.add(row("sticks", c -> c.sticks() < 2 && c.planks() >= 2, "craft", c -> j("item", "stick", "count", c.planks() >= 7 ? 8 : 4), 20, "棒"));
+				t.add(row("to_table", c -> c.planks() >= 3 && c.sticks() >= 2 && !c.tableNear(3.5) && c.tableNear(48), "goto", c -> pos(c.mark(RunSkills.MARK_TABLE)), 20 * 20, "作業台へ戻る"));
+				t.add(row("wpick", c -> c.planks() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "wooden_pickaxe", "count", 1), 30, "木のツルハシ"));
+				t.add(row("log", c -> c.logs() == 0 && c.planks() < 3, "mine", c -> j("block", "log", "count", 1), 20 * 60, "原木"));
 			}
 			case STONE -> {
-				t.add(row("cobble", c -> c.cobble() < cobbleNeed(c), "mine", c -> j("block", "stone", "count", Math.max(1, cobbleNeed(c) - c.cobble())), 90, "石を掘る"));
+				// 丸石は石ツルハシと石斧のぶんだけ（3+3）。それ以上は掘らない
+				t.add(row("cobble", c -> c.cobble() < cobbleNeed(c), "mine", c -> j("block", "stone", "count", Math.max(1, cobbleNeed(c) - c.cobble())), 20 * 60, "丸石を最低限"));
 				addSticks(t, c -> stickNeed(c));
+				t.add(row("to_table", c -> c.cobble() >= cobbleNeed(c) && !c.tableNear(3.5) && c.tableNear(48), "goto", c -> pos(c.mark(RunSkills.MARK_TABLE)), 20 * 30, "作業台へ戻る"));
 				t.add(row("spick", c -> c.pickTier() < 2 && c.cobble() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "stone_pickaxe", "count", 1), 30, "石のツルハシ"));
 				t.add(row("saxe", c -> c.axeTier() < 2 && c.cobble() >= 3 && c.sticks() >= 2, "craft", c -> j("item", "stone_axe", "count", 1), 30, "石の斧"));
-				t.add(row("ssword", c -> c.swordTier() < 2 && c.cobble() >= 2 && c.sticks() >= 1, "craft", c -> j("item", "stone_sword", "count", 1), 30, "石の剣"));
 			}
-			case IRON -> {
-				t.add(row("iron_ore", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 150, "鉄を掘る"));
-				t.add(row("coal", c -> c.n(Items.RAW_IRON) > 0 && !c.fuel(), "mine", c -> j("block", "coal", "count", 2), 20 * 60, "燃料の石炭"));
-				t.add(row("fuel_log", c -> c.n(Items.RAW_IRON) > 0 && !c.fuel(), "mine", c -> j("block", "log", "count", 2), 60 * 20, "燃料の原木"));
+			case MORE_WOOD -> {
+				// その後の作業台・棒・ボートぶん（5本前後）
+				t.add(row("log", c -> c.logs() < 5, "mine", c -> j("block", "log", "count", 5 - c.logs()), 20 * 90, "原木を追加"));
+			}
+			case LOOT -> {
+				t.add(row("bucket", c -> c.buckets() < 2 && c.n(Items.OBSIDIAN) < 10 && c.ingots() >= 3, "craft", c -> j("item", "bucket", "count", 1), 30, "バケツを作る"));
+				t.add(row("fns", c -> !hasIgniter(c) && c.has(Items.FLINT) && c.ingots() >= 1, "craft", c -> j("item", "flint_and_steel", "count", 1), 30, "火打石と打ち金"));
+				t.add(row("furnace_cobble", c -> c.n(Items.RAW_IRON) > 0 && c.ingots() < ironNeed(c) && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
 				t.add(row("smelt_iron", c -> c.n(Items.RAW_IRON) > 0 && c.ingots() < ironNeed(c), "smelt", c -> j("item", "raw_iron", "count", Math.min(c.n(Items.RAW_IRON), ironNeed(c) - c.ingots())), 20 * 60, "鉄を焼く"));
-				t.add(row("bucket", c -> c.buckets() < 2 && c.ingots() >= 3, "craft", c -> j("item", "bucket", "count", 1), 30, "バケツを作る"));
-				t.add(row("fns", c -> !c.has(Items.FLINT_AND_STEEL) && c.has(Items.FLINT) && c.ingots() >= 1, "craft", c -> j("item", "flint_and_steel", "count", 1), 30, "火打石と打ち金"));
-				t.add(row("shield_planks", c -> !c.has(Items.SHIELD) && c.ingots() >= 1 && c.planks() < 6 && c.logs() > 0, "craft", c -> j("item", "oak_planks", "count", 8), 20, "盾用の板材"));
-				t.add(row("shield_log", c -> !c.has(Items.SHIELD) && c.ingots() >= 1 && c.planks() < 6 && c.logs() == 0, "mine", c -> j("block", "log", "count", 2), 60 * 20, "盾用の原木"));
-				t.add(row("shield", c -> !c.has(Items.SHIELD) && c.ingots() >= 1 && c.planks() >= 6, "craft", c -> j("item", "shield", "count", 1), 30, "盾を作る"));
-				t.add(row("gravel", c -> !c.has(Items.FLINT_AND_STEEL) && !c.has(Items.FLINT) && !c.ap.flintGaveUp(), "mine", c -> j("block", "gravel", "count", 3), 60 * 20, "火打石用の砂利"));
+				// 宝の地図があれば埋もれた宝（鉄・TNT）
+				t.add(once("treasure_find", "treasure_tried", c -> c.overworld() && c.has(Items.FILLED_MAP), "find_structure", c -> j("type", "buried_treasure", "radius", 50), 20 * 240, "宝の地図の場所へ"));
+				t.add(once("treasure_dig", "treasure_looted", c -> near(c, "buried_treasure", 24), "dig_treasure", c -> new JsonObject(), 20 * 90, "宝を掘る"));
+				// 海が近ければ沈没船
+				t.add(once("shipwreck_find", "shipwreck_tried", c -> c.overworld() && c.ap.oceanNear(c), "find_structure", c -> j("type", "shipwreck", "radius", 8), 20 * 180, "沈没船を探す"));
+				t.add(once("shipwreck_loot", "shipwreck_looted", c -> near(c, "shipwreck", 24), "loot_chests", c -> j("radius", 16), 20 * 90, "沈没船のチェスト"));
+				// 海が遠ければ村（鍛冶屋のチェスト・パン）
+				t.add(once("village_find", "village_tried", c -> c.overworld(), "find_structure", c -> j("type", "village", "radius", 12), 20 * 240, "村を探す"));
+				t.add(once("village_loot", "village_looted", c -> near(c, "village", 64), "loot_chests", c -> j("radius", 40), 20 * 120, "村のチェスト"));
+				// 廃ポータル（チェストに火打石・黒曜石・金）。溶岩だまりはゲートの段階で探す
+				t.add(once("ruin_find", "ruin_tried", c -> c.overworld(), "find_structure", c -> j("type", "ruined_portal", "radius", 8), 20 * 120, "廃ポータルを探す"));
+				t.add(once("ruin_loot", "ruin_looted", c -> near(c, RunSkills.MARK_RUIN, 20), "loot_chests", c -> j("radius", 16), 20 * 60, "廃ポータルのチェスト"));
+				// 見つかった物で足りない時だけ、見えている鉄鉱石を少し掘る
+				t.add(row("iron_visible", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c) && c.exposedIron(16), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 90, "見えている鉄鉱石を少し"));
+				t.add(row("gravel", c -> !hasIgniter(c) && !c.has(Items.FLINT) && !c.ap.flintGaveUp(), "mine", c -> j("block", "gravel", "count", 3), 60 * 20, "火打石用の砂利"));
 			}
 			case FOOD -> {
 				t.add(row("cook_fuel", c -> c.raw() > 0 && !c.fuel(), "mine", c -> j("block", "log", "count", 2), 60 * 20, "焼く燃料"));
-				t.add(row("cook", c -> c.raw() >= 4 || c.raw() > 0 && c.cooked() + c.raw() >= 8, "smelt", c -> j("item", id(c.mostRaw()), "count", c.n(c.mostRaw())), 20 * 90, "肉を焼く"));
+				t.add(row("furnace_cobble", c -> c.raw() > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
+				t.add(row("cook", c -> c.raw() >= 4 || c.raw() > 0 && c.cooked() + c.raw() >= 6, "smelt", c -> j("item", id(c.mostRaw()), "count", c.n(c.mostRaw())), 20 * 90, "肉を焼く"));
 				t.add(row("hunt", c -> animal(c) != null, "hunt", c -> j("target", animal(c), "count", 3), 20 * 60, "動物を狩る"));
 				t.add(row("cook_rest", c -> c.raw() > 0, "smelt", c -> j("item", id(c.mostRaw()), "count", c.n(c.mostRaw())), 20 * 90, "肉を焼く"));
 			}
 			case PORTAL -> {
 				t.add(row("end", Ctx::end, "#jump:DRAGON", null, 0, "エンドにいる"));
 				t.add(row("enter", c -> c.overworld() && portalAt(c, c.mark(RunSkills.MARK_PORTAL_OW)), "enter_portal", c -> pos(c.mark(RunSkills.MARK_PORTAL_OW)), 20 * 120, "ゲートに入る"));
-				t.add(row("ruin", c -> c.overworld() && !c.ap.ruinChecked(), "find_structure", c -> {
-					c.ap.setRuinChecked();
-					return j("type", "ruined_portal");
-				}, 20 * 90, "近くの廃ポータルを見に行く"));
-				t.add(row("ruin_loot", c -> c.mark(RunSkills.MARK_RUIN) != null && c.dist(c.mark(RunSkills.MARK_RUIN)) < 20 && !c.ap.ruinLooted(), "loot_chests", c -> {
-					c.ap.setRuinLooted();
-					return new JsonObject();
-				}, 20 * 30, "廃ポータルのチェスト"));
-				t.add(row("need_bucket", c -> c.buckets() < 2 && c.n(Items.OBSIDIAN) < 10, "#jump:IRON", null, 0, "バケツが足りない"));
+				t.add(row("need_bucket", c -> c.buckets() < 2 && c.n(Items.OBSIDIAN) < 10, "#jump:LOOT", null, 0, "バケツが足りない"));
 				t.add(row("water", c -> c.has(Items.BUCKET) && !c.has(Items.WATER_BUCKET) && c.n(Items.OBSIDIAN) < 10, "fill_water", c -> new JsonObject(), 20 * 60, "水を汲む"));
-				t.add(row("build", c -> true, "build_nether_portal", c -> new JsonObject(), 20 * 150, "ゲートを作る"));
+				t.add(row("build", c -> true, "build_nether_portal", c -> new JsonObject(), 20 * 150, "ゲートを作る（溶岩だまりで）"));
 			}
 			case BLAZE -> {
 				t.add(row("ow_enter", c -> c.overworld() && portalAt(c, c.mark(RunSkills.MARK_PORTAL_OW)), "enter_portal", c -> pos(c.mark(RunSkills.MARK_PORTAL_OW)), 20 * 120, "ネザーへ"));
@@ -185,18 +211,30 @@ final class Plan {
 
 	// ---- 計算 ----
 
+	/** 丸石は石ツルハシ・石斧のぶんだけ。 */
 	static int cobbleNeed(Ctx c) {
-		return (c.pickTier() >= 2 ? 0 : 3) + (c.axeTier() >= 2 ? 0 : 3) + (c.swordTier() >= 2 ? 0 : 2)
-				+ (c.has(Items.FURNACE) ? 0 : 8);
+		return (c.pickTier() >= 2 ? 0 : 3) + (c.axeTier() >= 2 ? 0 : 3);
 	}
 
 	static int stickNeed(Ctx c) {
-		return (c.pickTier() >= 2 ? 0 : 2) + (c.axeTier() >= 2 ? 0 : 2) + (c.swordTier() >= 2 ? 0 : 1);
+		return (c.pickTier() >= 2 ? 0 : 2) + (c.axeTier() >= 2 ? 0 : 2);
 	}
 
-	/** 必要な鉄: バケツ2個（水用と溶岩用）・盾・火打石と打ち金。 */
+	/** 着火できる物（火打石と打ち金・ファイヤーチャージ）があるか、砂利を諦めたか。 */
+	static boolean hasIgniter(Ctx c) {
+		return c.has(Items.FLINT_AND_STEEL) || c.has(Items.FIRE_CHARGE) || c.ap.flintGaveUp();
+	}
+
+	/** 必要な鉄: バケツ2個（水用と溶岩用。黒曜石10個あれば不要）・火打石と打ち金。 */
 	static int ironNeed(Ctx c) {
-		return Math.max(0, 2 - c.buckets()) * 3 + (c.has(Items.SHIELD) ? 0 : 1) + (c.has(Items.FLINT_AND_STEEL) || c.ap.flintGaveUp() ? 0 : 1);
+		int buckets = c.n(Items.OBSIDIAN) >= 10 ? 0 : Math.max(0, 2 - c.buckets()) * 3;
+		return buckets + (hasIgniter(c) ? 0 : 1);
+	}
+
+	/** mark が近くにあるか。 */
+	static boolean near(Ctx c, String mark, double r) {
+		BlockPos p = c.mark(mark);
+		return c.overworld() && p != null && c.dist(new BlockPos(p.getX(), c.o.blockPosition().getY(), p.getZ())) <= r;
 	}
 
 	private static void addSticks(List<Row> t, java.util.function.ToIntFunction<Ctx> need) {
@@ -262,6 +300,14 @@ final class Plan {
 			}
 		}
 		return o;
+	}
+
+	/** 一度だけやる行（選ばれたら flag を立てる）。 */
+	private static Row once(String key, String flag, Predicate<Ctx> when, String tool, Function<Ctx, JsonObject> in, int timeout, String why) {
+		return new Row(key, c -> !c.ap.flag(flag) && when.test(c), tool, c -> {
+			c.ap.setFlag(flag);
+			return in.apply(c);
+		}, timeout, why);
 	}
 
 	private static Row row(String key, Predicate<Ctx> when, String tool, Function<Ctx, JsonObject> in, int timeout, String why) {

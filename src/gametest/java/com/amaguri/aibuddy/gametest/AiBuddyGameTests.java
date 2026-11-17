@@ -20,6 +20,7 @@ import com.amaguri.aibuddy.entity.ModEntities;
 
 /**
  * 実機で言われた不満（最初から強い・歩きが遅い・素手でも掘れる）を二度と起こさないためのサーバー gametest。
+ * (5) は自動進行のスタート待ちと序盤の手順（原木→作業台）。
  * 舞台は buildArena（48x6x9、床は土、周りはガラス）。座標はすべて GameTestHelper の相対座標。
  * 実行: ./gradlew runGameTest
  */
@@ -128,7 +129,7 @@ public class AiBuddyGameTests {
 	@GameTest(maxTicks = 80)
 	public void summonedMemberHasEmptyInventory(GameTestHelper h) {
 		buildArena(h);
-		FakeMember m = summon(h, 4.5f, 4.5f, true); // Autopilot は既定のまま（召喚直後は on）
+		FakeMember m = summon(h, 4.5f, 4.5f, true); // Autopilot は既定のまま（召喚直後はスタート待ちで何もしない）
 		h.runAfterDelay(40, () -> {
 			h.assertTrue(m.getInventory().isEmpty(), "召喚直後・40tick後でも持ち物が空であること");
 			for (EquipmentSlot slot : EquipmentSlot.VALUES) {
@@ -280,6 +281,42 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (5) 召喚直後は動かず（スタート待ち）、start() で 原木→作業台 に進む ----
+
+	@GameTest(maxTicks = 1200)
+	public void waitsForStartThenLogsToCraftingTable(GameTestHelper h) {
+		buildArena(h);
+		for (int x : new int[] { 12, 16 }) {
+			h.setBlock(x, STAND, 4, Blocks.OAK_LOG);
+			h.setBlock(x, STAND + 1, 4, Blocks.OAK_LOG);
+		}
+		FakeMember m = summon(h, 4.5f, 4.5f, true); // 自動進行は既定のまま（スタート待ち）
+		m.autopilot().setFastForwardAllowed(false); // 人のいないテスト世界で早送りしない
+		var st = new Object() {
+			boolean started;
+		};
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			if (!st.started) {
+				if (now < 60) {
+					return;
+				}
+				h.assertTrue(!m.autopilot().isStarted(), "召喚直後はスタート待ちのはず");
+				h.assertTrue(m.getInventory().isEmpty(), "スタート前に物を集めている");
+				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(12, STAND, 4)).is(Blocks.OAK_LOG),
+						"スタート前に原木を掘っている");
+				m.autopilot().start();
+				m.autopilot().start(); // 2回目は何もしない（冪等）
+				h.assertTrue(m.autopilot().isStarted(), "start() 後は開始済みのはず");
+				st.started = true;
+				return;
+			}
+			if (hasPlacedTable(h)) {
+				h.succeed();
+			}
+		});
+	}
+
 	private static boolean hasPlacedTable(GameTestHelper h) {
 		for (int x = 1; x < LEN - 1; x++) {
 			for (int y = STAND; y < STAND + 4; y++) {
@@ -291,5 +328,24 @@ public class AiBuddyGameTests {
 			}
 		}
 		return false;
+	}
+
+	/** `/tp Luzaku x y z` のように素の名前・@e[name=] で FakeMember を指定できる（Mixin と customName）。 */
+	@GameTest(maxTicks = 100)
+	public void vanillaCommandsCanTargetFakeMemberByName(GameTestHelper h) {
+		buildArena(h);
+		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		m.setDisplayNameText("Luzaku");
+		Vec3 dest = h.absoluteVec(new Vec3(20.5, STAND, 4.5));
+		var server = h.getLevel().getServer();
+		var source = server.createCommandSourceStack().withSuppressedOutput();
+		server.getCommands().performPrefixedCommand(source, String.format(java.util.Locale.ROOT,
+				"tp Luzaku %.1f %.1f %.1f", dest.x, dest.y, dest.z));
+		h.runAfterDelay(5, () -> {
+			h.assertTrue(m.position().distanceTo(dest) < 1.5, "素の名前の /tp で移動したこと: " + m.position());
+			server.getCommands().performPrefixedCommand(source, "tag @e[name=Luzaku] add aibuddy_test");
+			h.assertTrue(m.entityTags().contains("aibuddy_test"), "@e[name=Luzaku] で選べること");
+			h.succeed();
+		});
 	}
 }

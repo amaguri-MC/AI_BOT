@@ -27,10 +27,21 @@ final class StructureSkill extends Skill {
 	private BlockPos found;
 	private Vec3 goal;
 	private int ticks;
+	/** 検索半径（チャンク）。0 なら種類ごとの既定。近くだけ探したいとき（序盤の探索）に絞る */
+	private final int radius;
 
 	StructureSkill(FakeMember o, SkillRunner r, String type) {
+		this(o, r, type, 0);
+	}
+
+	StructureSkill(FakeMember o, SkillRunner r, String type, int radiusChunks) {
 		super(o, r);
 		this.type = type == null ? "" : type.toLowerCase().trim();
+		this.radius = Math.max(0, radiusChunks);
+	}
+
+	private int rad(int def) {
+		return radius > 0 ? radius : def;
 	}
 
 	@Override
@@ -53,14 +64,29 @@ final class StructureSkill extends Skill {
 					return "できない: 廃ポータルはオーバーワールドで探す";
 				}
 				// 近く（8チャンク内）だけ。遠い廃ポータルに寄り道はしない
-				found = l.findNearestMapStructure(StructureTags.RUINED_PORTAL, from, 8, false);
+				found = l.findNearestMapStructure(StructureTags.RUINED_PORTAL, from, rad(8), false);
 			}
 			case "village" -> {
 				label = "村";
 				if (!l.dimension().equals(Level.OVERWORLD)) {
 					return "できない: 村はオーバーワールドにある";
 				}
-				found = l.findNearestMapStructure(StructureTags.VILLAGE, from, 100, false);
+				found = l.findNearestMapStructure(StructureTags.VILLAGE, from, rad(100), false);
+			}
+			case "shipwreck" -> {
+				label = "沈没船";
+				if (!l.dimension().equals(Level.OVERWORLD)) {
+					return "できない: 沈没船はオーバーワールドにある";
+				}
+				found = l.findNearestMapStructure(StructureTags.SHIPWRECK, from, rad(8), false);
+			}
+			case "buried_treasure" -> {
+				label = "埋もれた宝";
+				if (!l.dimension().equals(Level.OVERWORLD)) {
+					return "できない: 埋もれた宝はオーバーワールドにある";
+				}
+				// 宝の地図が指す先（ON_TREASURE_MAPS＝埋もれた宝）。地図はふつう近くを指す
+				found = l.findNearestMapStructure(StructureTags.ON_TREASURE_MAPS, from, rad(50), false);
 			}
 			case "fortress" -> {
 				label = "ネザー要塞";
@@ -110,7 +136,14 @@ final class StructureSkill extends Skill {
 		nav.tick();
 		if (nav.arrived()) {
 			String where = found.getX() + " " + o.blockPosition().getY() + " " + found.getZ();
-			finish(label + "に着いた " + where, label + "に着いた 座標 " + where);
+			String ev = switch (type) {
+				case "shipwreck" -> "沈没船あった";
+				case "village" -> "村あった";
+				case "ruined_portal" -> "廃ポータルあった";
+				case "buried_treasure" -> "宝の地図の場所に着いた";
+				default -> label + "に着いた";
+			};
+			finish(label + "に着いた " + where, ev + " 座標 " + where);
 		} else if (nav.failed() || ticks > 20 * 60 * 40) {
 			finish(label + "にたどり着けなかった", label + "にたどり着けなかった 座標 " + found.getX() + " " + found.getZ());
 		}

@@ -7,10 +7,15 @@ import java.util.Locale;
  * 数字は上手いスピードランナーの区間タイムを目安にした。
  */
 public enum Stage {
-	WOOD("wood", "木集め", 30),
-	STONE("stone", "石の道具", 30),
-	IRON("iron", "鉄（バケツ・盾・火打石）", 90),
-	FOOD("food", "食料集め", 40),
+	// 序盤はルザク流（非効率なことをしない上級者）の手順に固定: 原木3→作業台→木のツルハシ→丸石は最低限→石ツルハシ・石斧→原木を追加。
+	WOOD("wood", "原木集め", 15),
+	TABLE("table", "作業台", 5),
+	WOODEN_PICK("wooden_pick", "木のツルハシ", 5),
+	STONE("stone", "石ツルハシと石斧", 20),
+	MORE_WOOD("more_wood", "原木の追加", 15),
+	// 鉄は掘らずに探索で拾う（沈没船→宝の地図→埋もれた宝 / 村 / 廃ポータル）。揃わない時だけ見えている鉄鉱石を少し掘る
+	LOOT("loot", "探索で鉄集め", 100),
+	FOOD("food", "食料集め", 30),
 	PORTAL("portal", "ネザーゲート", 60),
 	BLAZE("blaze", "ブレイズロッド集め", 120),
 	PEARLS("pearls", "エンダーパール集め", 120),
@@ -40,6 +45,9 @@ public enum Stage {
 			return null;
 		}
 		String k = s.trim().toLowerCase(Locale.ROOT);
+		if (k.equals("iron")) {
+			return LOOT; // v0.2 の保存データ（鉄の段階）は探索の段階として読む
+		}
 		for (Stage st : values()) {
 			if (st.id.equals(k) || st.name().toLowerCase(Locale.ROOT).equals(k) || st.label.equals(s.trim())) {
 				return st;

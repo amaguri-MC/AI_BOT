@@ -71,6 +71,9 @@ public class FakeMember extends PathfinderMob {
 	private SkillRunner skills;
 	private com.amaguri.aibuddy.run.Autopilot autopilot;
 	private boolean attached;
+	private net.minecraft.world.phys.Vec3 lastTickPos;
+	/** 1tickでこれ以上動いたらテレポートとみなす（ブロック）。 */
+	private static final double TELEPORT_JUMP = 6.0;
 	private float lastAppliedSlowMelt = -1f;
 
 	public FakeMember(EntityType<? extends FakeMember> type, Level level) {
@@ -163,7 +166,11 @@ public class FakeMember extends PathfinderMob {
 	}
 
 	public void setDisplayNameText(String name) {
-		this.entityData.set(DATA_DISPLAY_NAME, name == null ? "" : name);
+		String n = name == null ? "" : name;
+		this.entityData.set(DATA_DISPLAY_NAME, n);
+		// customName を同じ名前にして @e[name=...] で選べるようにする（名前タグはクライアント側 Renderer が自前で描くので二重にならない）
+		setCustomName(n.isEmpty() ? null : Component.literal(n));
+		setCustomNameVisible(false);
 	}
 
 	public boolean isPuddle() {
@@ -256,6 +263,13 @@ public class FakeMember extends PathfinderMob {
 		if (level().isClientSide()) {
 			return;
 		}
+		// /tp などで大きく飛んだら、古い目標への経路を捨てて Nav に引き直させる
+		net.minecraft.world.phys.Vec3 now = position();
+		if (lastTickPos != null && now.distanceToSqr(lastTickPos) > TELEPORT_JUMP * TELEPORT_JUMP) {
+			getNavigation().stop();
+			setSprinting(false);
+		}
+		lastTickPos = now;
 		ensureAttached();
 		if (!meltFrozen && !isPuddle() && this.tickCount % MELT_STEP_INTERVAL == 0) {
 			setMelt(getMelt() + MELT_PER_TICK * MELT_STEP_INTERVAL);

@@ -37,6 +37,7 @@ final class Nav {
 	private boolean sprint;
 
 	private Mode mode = Mode.NORMAL;
+	private Vec3 lastTickPos;
 	private int modeTicks;
 	private int checkTimer;
 	private int noProgress;
@@ -142,6 +143,17 @@ final class Nav {
 		if (o.isInWater() || o.isInLava()) {
 			o.getJumpControl().jump(); // 泳いで上がる
 		}
+		// /tp などで位置が大きく飛んだら、掘る・柱・橋の途中状態を捨てて経路を引き直す
+		Vec3 here = o.position();
+		if (lastTickPos != null && here.distanceToSqr(lastTickPos) > 36.0) {
+			digQueue.clear();
+			digger.cancel();
+			directTicks = 0;
+			pathTarget = null;
+			o.getNavigation().stop();
+			backToNormal();
+		}
+		lastTickPos = here;
 		switch (mode) {
 			case NORMAL -> tickNormal();
 			case DETOUR -> tickDetour();

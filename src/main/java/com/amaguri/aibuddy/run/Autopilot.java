@@ -22,7 +22,8 @@ import net.minecraft.world.level.Level;
 
 /**
  * 自動進行。行動を決めるのはここで、脳（AI）は喋るのとたまの割り込み（ついていく等）だけ。脳を待って止まらない。
- * 毎tick:
+ * 召喚直後は「スタート待ち」: 近くの人を見て少しうろつくだけ。start()（脳が「スタート」を聞いた・/aibuddy run on）で始まる。
+ * 開始後の毎tick:
  *  1. 見られているか（同じ次元で追跡距離＝160ブロック内にプレイヤー。スペクテイターも「見ている」）を数え、20秒見られていなければ早送り（FastForward）。
  *  2. 段階（Stage）が終わっていれば postEvent して次へ。
  *  3. 手が空いて0.5秒たったら Plan の表から次の行動を SkillRunner に出す（どの段階でも2秒以内）。
@@ -47,6 +48,11 @@ public final class Autopilot {
 	final FastForward ff;
 
 	private boolean enabled = true;
+	/** スタート待ち（召喚直後は true。保存する） */
+	private boolean waiting = true;
+	/** gametest 用: 早送りを許すか（保存しない） */
+	private boolean ffAllowed = true;
+	private int waitTicks;
 	private Stage stage = Stage.WOOD;
 	private int pauseTicks;
 	private String pauseWhy = "";
@@ -65,9 +71,11 @@ public final class Autopilot {
 	private int eyesNeeded = 12;
 	private int gravelTries;
 	private int foodFails;
-	private boolean ruinChecked;
-	private boolean ruinLooted;
 	private boolean dragonKilled;
+	/** 一度だけやる探索の印（ruin_tried, shipwreck_looted など） */
+	private final java.util.Set<String> flags = new java.util.HashSet<>();
+	private int oceanCheckedAt = -100000;
+	private boolean oceanNear;
 
 	public Autopilot(FakeMember owner) {
 		this.o = owner;
@@ -85,6 +93,10 @@ public final class Autopilot {
 			if (ff.active()) {
 				ff.stop(false);
 			}
+			return;
+		}
+		if (waiting) {
+			waitingTick(sl);
 			return;
 		}
 		if (now % 100 == 1 && stage != Stage.DONE) {
@@ -107,7 +119,7 @@ public final class Autopilot {
 			}
 			return;
 		}
-		if (unwatched >= UNWATCHED_TO_FF && stage != Stage.DONE && !ff.walkOnly(stage)) {
+		if (ffAllowed && unwatched >= UNWATCHED_TO_FF && stage != Stage.DONE && !ff.walkOnly(stage)) {
 			ff.start();
 			return;
 		}
@@ -136,6 +148,42 @@ public final class Autopilot {
 		}
 		if (++idle >= IDLE_TO_ACT) {
 			decide(c);
+		}
+	}
+
+	/**
+	 * スタートの合図（脳が「スタート」等を聞いた・/aibuddy run on）。スタート待ちを解いて自動進行を始める。
+	 * すでに始まっていれば何もしない（何度呼んでもよい）。
+	 */
+	public void start() {
+		if (!waiting && enabled) {
+			return;
+		}
+		boolean first = waiting;
+		waiting = false;
+		enabled = true;
+		pauseTicks = 0;
+		idle = IDLE_TO_ACT;
+		unwatched = 0;
+		if (first) {
+			if (o.skills().isBusy() && o.skills().currentName().startsWith("Goto")) {
+				o.skills().stop(); // 待機中のうろうろをやめる
+			}
+			LOGGER.info("[run] {} スタート", o.getDisplayNameText());
+			o.postEvent("スタートした（" + stage.label + "から）");
+		}
+	}
+
+	/** スタート済みか（スタート待ちなら false）。 */
+	public boolean isStarted() {
+		return !waiting;
+	}
+
+	/** gametest 用: 早送りを止める（人がいないテスト世界ですぐ早送りにならないように）。保存しない。 */
+	public void setFastForwardAllowed(boolean on) {
+		ffAllowed = on;
+		if (!on && ff.active()) {
+			ff.stop(false);
 		}
 	}
 
@@ -176,13 +224,16 @@ public final class Autopilot {
 	}
 
 	public String stageName() {
-		return stage.label;
+		return waiting ? "スタート待ち" : stage.label;
 	}
 
 	/** 「ブレイズロッド集め（4/7）」のような今の目標。 */
 	public String goalText() {
 		if (!(o.level() instanceof ServerLevel)) {
 			return stage.label;
+		}
+		if (waiting) {
+			return "スタート待ち（合図があったら" + stage.label + "から始める）";
 		}
 		String p = Plan.progress(stage, new Ctx(o, this));
 		String base = stage.label + (p.isEmpty() ? "" : "（" + p + "）");
@@ -211,8 +262,8 @@ public final class Autopilot {
 		t.putInt("EyesNeeded", eyesNeeded);
 		t.putInt("GravelTries", gravelTries);
 		t.putInt("FoodFails", foodFails);
-		t.putBoolean("RuinChecked", ruinChecked);
-		t.putBoolean("RuinLooted", ruinLooted);
+		t.putBoolean("Waiting", waiting);
+		t.putString("Flags", String.join(",", flags));
 		t.putBoolean("DragonKilled", dragonKilled);
 		t.putString("LastDim", lastDim);
 		t.putInt("Unwatched", unwatched);
@@ -237,8 +288,20 @@ public final class Autopilot {
 		eyesNeeded = t.getIntOr("EyesNeeded", 12);
 		gravelTries = t.getIntOr("GravelTries", 0);
 		foodFails = t.getIntOr("FoodFails", 0);
-		ruinChecked = t.getBooleanOr("RuinChecked", false);
-		ruinLooted = t.getBooleanOr("RuinLooted", false);
+		// v0.2 の保存データ（Waiting なし）はもう走っていたので待たない
+		waiting = t.getBooleanOr("Waiting", false);
+		flags.clear();
+		for (String f : t.getStringOr("Flags", "").split(",")) {
+			if (!f.isBlank()) {
+				flags.add(f);
+			}
+		}
+		if (t.getBooleanOr("RuinChecked", false)) {
+			flags.add("ruin_tried");
+		}
+		if (t.getBooleanOr("RuinLooted", false)) {
+			flags.add("ruin_looted");
+		}
 		dragonKilled = t.getBooleanOr("DragonKilled", false);
 		lastDim = t.getStringOr("LastDim", "");
 		unwatched = t.getIntOr("Unwatched", 0);
@@ -304,20 +367,53 @@ public final class Autopilot {
 		return foodFails >= 3;
 	}
 
-	boolean ruinChecked() {
-		return ruinChecked;
+	boolean flag(String f) {
+		return flags.contains(f);
 	}
 
-	void setRuinChecked() {
-		ruinChecked = true;
+	void setFlag(String f) {
+		flags.add(f);
 	}
 
-	boolean ruinLooted() {
-		return ruinLooted;
+	/** 半径96に海洋バイオームがあるか（16ブロックおきに見る。30秒ごとに見直す）。 */
+	boolean oceanNear(Ctx c) {
+		if (now - oceanCheckedAt < 600) {
+			return oceanNear;
+		}
+		oceanCheckedAt = (int) now;
+		oceanNear = false;
+		if (!c.overworld()) {
+			return false;
+		}
+		BlockPos me = o.blockPosition();
+		for (int dx = -96; dx <= 96 && !oceanNear; dx += 16) {
+			for (int dz = -96; dz <= 96; dz += 16) {
+				BlockPos p = new BlockPos(me.getX() + dx, 62, me.getZ() + dz);
+				if (c.l.hasChunkAt(p) && c.l.getBiome(p).is(net.minecraft.tags.BiomeTags.IS_OCEAN)) {
+					oceanNear = true;
+					break;
+				}
+			}
+		}
+		return oceanNear;
 	}
 
-	void setRuinLooted() {
-		ruinLooted = true;
+	/** スタート待ち: 近くの人を見て、ときどき2〜3ブロックだけうろつく。進行・早送りはしない。 */
+	private void waitingTick(ServerLevel sl) {
+		SkillRunner r = o.skills();
+		if (r.isBusy()) {
+			return; // 脳が頼んだ「ついていく」などはそのまま
+		}
+		ServerPlayer p = new Ctx(o, this).nearestPlayer(16);
+		if (p != null) {
+			o.getLookControl().setLookAt(p, 30f, 30f);
+		}
+		if (++waitTicks % 160 == 0 && o.getRandom().nextInt(3) == 0) {
+			BlockPos me = o.blockPosition();
+			int dx = o.getRandom().nextInt(5) - 2;
+			int dz = o.getRandom().nextInt(5) - 2;
+			r.startAuto("goto", Plan.pos(me.offset(dx, 0, dz)));
+		}
 	}
 
 	boolean dragonKilled() {
