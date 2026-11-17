@@ -35,9 +35,6 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 
 	/** EntityRenderDispatcherMixin が参照する。 */
 	public static FakeMemberRenderer INSTANCE;
-	private int dbg;
-	private int dbgScale;
-	private int dbgSubmit;
 	private final PlayerModel wideModel;
 	private final PlayerModel slimModel;
 
@@ -78,9 +75,6 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		state.leftArmPose = armPose(entity.getOffhandItem());
 
 		float melt = Math.max(0f, Math.min(1f, entity.getMelt()));
-		if (melt > 0f && (dbg++ % 120) == 0) {
-			AiBuddyMod.LOGGER.info("[melt] extract melt={} state={}", melt, state.getClass().getSimpleName());
-		}
 		if (state instanceof FakeMemberRenderState fs) {
 			fs.melt = melt;
 			// 胴の平均色はテクスチャID単位でキャッシュ済み（毎フレームは Map 引きだけ）
@@ -103,10 +97,6 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 
 	@Override
 	protected void scale(AvatarRenderState state, PoseStack poseStack) {
-		if (dbgScale++ == 0) {
-			String st = StackWalker.getInstance().walk(f -> f.limit(10).map(x -> x.getClassName() + "." + x.getMethodName()).collect(java.util.stream.Collectors.joining(" <- ")));
-			AiBuddyMod.LOGGER.info("[melt] stack scale: {}", st);
-		}
 		poseStack.scale(0.9375f, 0.9375f, 0.9375f); // AvatarRenderer と同じ
 	}
 
@@ -135,9 +125,6 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		// 太い腕/細い腕のモデルは submit 時に選ぶ（extract は全員分が先に走るため）
 		this.model = state.skin.model() == PlayerModelType.SLIM ? this.slimModel : this.wideModel;
 		float m = meltOf(state);
-		if (dbgSubmit++ % 60 == 0) {
-			AiBuddyMod.LOGGER.info("[melt] submit m={} collector={}", m, collector.getClass().getName());
-		}
 		if (m <= 0f) {
 			super.submit(state, poseStack, collector, camera);
 			return;
@@ -160,9 +147,6 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		int light = state.lightCoords;
 		// UNVERIFIED: entityTranslucent(Identifier) が白テクスチャ×頂点色で半透明に描けること
 		collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucent(PUDDLE_TEXTURE), (pose, consumer) -> {
-			if (dbgSubmit % 60 < 2) {
-				AiBuddyMod.LOGGER.info("[melt] puddle geometry callback radius={} argb={}", radius, Integer.toHexString(argb));
-			}
 			final int n = 28;
 			int rim = rimColor(argb);
 			float prevX = 0;
@@ -177,10 +161,8 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 					float iz = z * 0.82f;
 					float px = prevX * 0.82f;
 					float pz = prevZ * 0.82f;
-					// 中央は胴の平均色(暗め)、縁(外側18%)は少し明るく。裏表どちらからも見えるよう逆巻きも足す（カリング対策）
-					quad(consumer, pose, 0, 0, px, pz, ix, iz, ix, iz, argb, light, 1f);
+					// 中央は胴の平均色(暗め)、縁(外側18%)は少し明るく。上向きの1枚だけ出す（両面を重ねると同じ高さで Z ファイトして縞になる。26.2 の entityTranslucent は裏面を消さないので1枚でよい）
 					quad(consumer, pose, 0, 0, ix, iz, px, pz, px, pz, argb, light, 1f);
-					quad(consumer, pose, px, pz, prevX, prevZ, x, z, ix, iz, rim, light, 1f);
 					quad(consumer, pose, ix, iz, x, z, prevX, prevZ, px, pz, rim, light, 1f);
 				}
 				prevX = x;
