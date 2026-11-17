@@ -265,7 +265,11 @@ public class FakeMember extends PathfinderMob {
 				haltForPuddle();
 			}
 		} else {
-			autopilot().tick();
+			try {
+				autopilot().tick();
+			} catch (RuntimeException e) {
+				com.amaguri.aibuddy.AiBuddyMod.LOGGER.warn("autopilot tick failed", e);
+			}
 			skills().tick();
 		}
 	}
