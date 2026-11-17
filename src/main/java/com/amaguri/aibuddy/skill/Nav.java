@@ -442,9 +442,7 @@ final class Nav {
 		if (o.isInWater() && !o.isPassenger()) {
 			swimTowards();
 		} else {
-			if (o.isSwimming()) {
-				o.setSwimming(false);
-			}
+			Motion.endSwim(o);
 			dasher.tick(dash);
 		}
 		if (o.tickCount % 3 == 0 && Motion.lavaBrake(o)) {

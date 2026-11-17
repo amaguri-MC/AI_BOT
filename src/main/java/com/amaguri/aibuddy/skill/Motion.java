@@ -263,6 +263,10 @@ final class Motion {
 		if (!o.isSwimming()) {
 			o.setSwimming(true);
 		}
+		// UNVERIFIED: mob では Entity.updatePose が Pose.SWIMMING にしてくれなかった（CI で pose=STANDING のまま）ので自分で立てる
+		if (o.getPose() != net.minecraft.world.entity.Pose.SWIMMING) {
+			o.setPose(net.minecraft.world.entity.Pose.SWIMMING);
+		}
 		double surface = waterSurfaceY(l, o);
 		if (Double.isNaN(surface)) {
 			surface = o.getY() + 1.0;
@@ -292,6 +296,16 @@ final class Motion {
 			vy = 0.36;
 		}
 		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
+	}
+
+	/** 泳ぎ姿勢を戻す（水から上がったとき）。 */
+	static void endSwim(FakeMember o) {
+		if (o.isSwimming()) {
+			o.setSwimming(false);
+		}
+		if (o.getPose() == net.minecraft.world.entity.Pose.SWIMMING) {
+			o.setPose(net.minecraft.world.entity.Pose.STANDING);
+		}
 	}
 
 	/** 参照高さ付近の (x,z) の水柱が「深さ2以上の水面」か。屋根（上空のブロック）は見ない。 */

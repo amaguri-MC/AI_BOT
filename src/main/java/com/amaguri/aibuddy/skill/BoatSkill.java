@@ -210,10 +210,16 @@ final class BoatSkill extends Skill {
 					}
 				}
 			}
+			boolean slowIn = false;
 			if (Float.isNaN(chosen)) {
+				// 6ブロック先まで水が続く向きが無い = 岸が近い。立てる陸が見えたら上陸、まだなら岸へゆっくり寄る
 				Vec3 st = standAhead(l, bp, want);
-				land(l, st);
-				return;
+				if (st != null) {
+					land(l, st);
+					return;
+				}
+				chosen = want;
+				slowIn = true;
 			}
 			float diff = Mth.wrapDegrees(chosen - yaw);
 			yaw += Mth.clamp(diff, -TURN, TURN);
@@ -222,7 +228,7 @@ final class BoatSkill extends Skill {
 			o.setYRot(yaw);
 			o.setYHeadRot(yaw);
 			o.setYBodyRot(yaw);
-			double sp = Math.abs(diff) > 60 ? SPEED * 0.4 : SPEED;
+			double sp = slowIn ? SPEED * 0.5 : Math.abs(diff) > 60 ? SPEED * 0.4 : SPEED;
 			boat.setDeltaMovement(dir.x * sp, boat.getDeltaMovement().y, dir.z * sp);
 			boat.setPaddleState(true, true);
 			// UNVERIFIED: mob 乗客だと Boat の本体が動かないことがある。進んでいなければ自分で位置を進める
