@@ -246,7 +246,24 @@ public class AiBuddyGameTests {
 				com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[mine-test] t={} pos={} travelled={} iron={} status={}", h.getTick(), p, st.travelled, count(m, Items.RAW_IRON), m.skills().status());
 			}
 			if (h.getTick() == 1400) {
-				h.fail("鉄を掘り切れない: " + m.skills().status() + " travelled=" + st.travelled);
+				StringBuilder items = new StringBuilder(); // DIAG
+				for (ItemEntity e : h.getLevel().getEntitiesOfClass(ItemEntity.class, m.getBoundingBox().inflate(12))) {
+					net.minecraft.core.BlockPos bp = e.blockPosition();
+					items.append(" ").append(e.getItem()).append("@").append(h.relativeVec(e.position()))
+							.append(" in=").append(h.getLevel().getBlockState(bp).getBlock().getName().getString())
+							.append(" up=").append(h.getLevel().getBlockState(bp.above()).getBlock().getName().getString());
+				}
+				StringBuilder air = new StringBuilder();
+				for (int x = 10; x <= 16; x++) {
+					for (int y = MINE_FLOOR + 1; y <= MINE_FLOOR + 3; y++) {
+						for (int z = 1; z <= 7; z++) {
+							if (!h.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(Blocks.STONE)) {
+								air.append(" (").append(x).append(",").append(y - MINE_FLOOR).append(",").append(z).append(")");
+							}
+						}
+					}
+				}
+				h.fail("鉄を掘り切れない: " + m.skills().status() + " travelled=" + st.travelled + " pos=" + p + " items=" + items + " dug=" + air);
 			}
 			if (count(m, Items.RAW_IRON) >= 2) {
 				// 目標までの直線は十数ブロック。往復していれば移動距離が大きく膨らむ。
