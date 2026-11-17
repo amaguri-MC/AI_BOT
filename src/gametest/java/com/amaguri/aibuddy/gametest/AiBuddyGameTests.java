@@ -348,4 +348,59 @@ public class AiBuddyGameTests {
 			h.succeed();
 		});
 	}
+
+	/** 死ぬと約3秒後に、同じ人格・名前・スキンで溶け0の新しい体がベッドの所に戻る。 */
+	@GameTest(maxTicks = 200)
+	public void deadMemberRespawnsWithSameIdentityAfterThreeSeconds(GameTestHelper h) {
+		buildArena(h);
+		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		m.setPersonaId("respawn_test_persona");
+		m.setSkinName("test_skin");
+		m.setDisplayNameText("Testo");
+		m.setMelt(0.6f);
+		net.minecraft.core.BlockPos headRel = new net.minecraft.core.BlockPos(14, STAND, 4);
+		placeBed(h, headRel);
+		m.setBed(h.absolutePos(headRel), h.getLevel().dimension());
+		m.hurtServer(h.getLevel(), h.getLevel().damageSources().genericKill(), 1000f);
+		h.assertTrue(m.isDeadOrDying(), "致命傷で死にかけになる");
+		h.runAfterDelay(100, () -> {
+			List<? extends FakeMember> alive = h.getLevel().getEntities(ModEntities.FAKE_MEMBER,
+					e -> e.isAlive() && "respawn_test_persona".equals(e.getPersonaId()));
+			h.assertTrue(alive.size() == 1, "生きている体がちょうど1つ（二重に湧かない）: " + alive.size());
+			FakeMember n = alive.get(0);
+			h.assertTrue(n != m, "新しい体に入れ替わっている");
+			h.assertTrue("Testo".equals(n.getDisplayNameText()), "表示名が同じ");
+			h.assertTrue("test_skin".equals(n.getSkinName()), "スキンが同じ");
+			h.assertTrue(n.getMelt() == 0f, "溶けは0に戻る");
+			h.assertTrue(n.position().distanceTo(h.absoluteVec(Vec3.atCenterOf(headRel))) < 4.0, "ベッドの近くに戻る: " + n.position());
+			h.succeed();
+		});
+	}
+
+	/** 夜にベッドを持っていれば置いて寝て、そこがリスポーン地点になる。 */
+	@GameTest(maxTicks = 300)
+	public void memberSleepsInPlacedBedAtNightAndSetsRespawn(GameTestHelper h) {
+		buildArena(h);
+		var server = h.getLevel().getServer();
+		var source = server.createCommandSourceStack().withSuppressedOutput();
+		server.getCommands().performPrefixedCommand(source, "time set night");
+		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		m.getInventory().addItem(new ItemStack(Items.RED_BED));
+		h.assertTrue(com.amaguri.aibuddy.skill.SleepRules.shouldSleep(m), "夜でベッドを持っていれば寝てよい");
+		String r = m.skills().startAuto("sleep", new JsonObject());
+		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
+		h.runAfterDelay(120, () -> {
+			boolean ok = m.isSleeping() && m.getBedPos() != null
+					&& m.level().getBlockState(m.getBedPos()).getBlock() instanceof net.minecraft.world.level.block.BedBlock;
+			server.getCommands().performPrefixedCommand(source, "time set day");
+			h.assertTrue(ok, "寝ていてリスポーン地点が更新されている: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos());
+			h.succeed();
+		});
+	}
+
+	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
+		var bed = Blocks.RED_BED.defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
+		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
+		h.setBlock(headRel, bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
+	}
 }
