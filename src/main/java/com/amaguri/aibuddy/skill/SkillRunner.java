@@ -144,6 +144,9 @@ public final class SkillRunner {
 		if (s == null) {
 			s = RunSkills.create(tool, owner, this, in);
 		}
+		if (s == null && "sleep".equals(tool)) {
+			s = new SleepSkill(owner, this, in.has("pickup") && in.get("pickup").getAsBoolean());
+		}
 		return s;
 	}
 

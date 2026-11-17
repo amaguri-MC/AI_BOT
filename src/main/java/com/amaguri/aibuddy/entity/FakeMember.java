@@ -71,6 +71,15 @@ public class FakeMember extends PathfinderMob {
 	private SkillRunner skills;
 	private com.amaguri.aibuddy.run.Autopilot autopilot;
 	private boolean attached;
+	/** リスポーン地点のベッド（頭側）。無ければ null。 */
+	private net.minecraft.core.BlockPos bedPos;
+	private net.minecraft.resources.ResourceKey<Level> bedDim;
+	/** die() で持ち物の扱いを決めた（読込直後の死にかけ個体では false）。 */
+	private boolean deathHandled;
+	private boolean keepInventoryOnDeath;
+	private boolean respawned;
+	/** 死んでからリスポーンするまで（tick）。 */
+	public static final int RESPAWN_DELAY_TICKS = 60;
 	private net.minecraft.world.phys.Vec3 lastTickPos;
 	/** 1tickでこれ以上動いたらテレポートとみなす（ブロック）。 */
 	private static final double TELEPORT_JUMP = 6.0;
@@ -80,6 +89,28 @@ public class FakeMember extends PathfinderMob {
 		super(type, level);
 		setCanPickUpLoot(true);
 		setPersistenceRequired();
+		// 死んだとき装備も必ず落とす（keepInventory のときは dropCustomDeathLoot 側で落とさず引き継ぐ）
+		for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.VALUES) {
+			if (slot != net.minecraft.world.entity.EquipmentSlot.BODY && slot != net.minecraft.world.entity.EquipmentSlot.SADDLE) {
+				setGuaranteedDrop(slot); // UNVERIFIED: 装備の落としかたは Mob.dropCustomDeathLoot 任せ（gametest で確認）
+			}
+		}
+	}
+
+	// ---- bed / respawn point ----
+
+	public net.minecraft.core.BlockPos getBedPos() {
+		return bedPos;
+	}
+
+	public net.minecraft.resources.ResourceKey<Level> getBedDim() {
+		return bedDim;
+	}
+
+	/** リスポーン地点のベッドを覚える（null で忘れる）。 */
+	public void setBed(net.minecraft.core.BlockPos pos, net.minecraft.resources.ResourceKey<Level> dim) {
+		this.bedPos = pos == null ? null : pos.immutable();
+		this.bedDim = pos == null ? null : dim;
 	}
 
 	public static AttributeSupplier.Builder createAttributes() {
@@ -270,6 +301,9 @@ public class FakeMember extends PathfinderMob {
 			setSprinting(false);
 		}
 		lastTickPos = now;
+		if (isDeadOrDying()) {
+			return; // 死んでいる間は進行もスキルも止める（リスポーンは tickDeath）
+		}
 		ensureAttached();
 		if (!meltFrozen && !isPuddle() && this.tickCount % MELT_STEP_INTERVAL == 0) {
 			setMelt(getMelt() + MELT_PER_TICK * MELT_STEP_INTERVAL);
@@ -316,8 +350,8 @@ public class FakeMember extends PathfinderMob {
 
 	@Override
 	protected boolean isImmobile() {
-		// 水たまり中は動けない（ジャンプ・移動入力が無効になる）。
-		return isPuddle() || super.isImmobile();
+		// 水たまり中・寝ている間は動けない（ジャンプ・移動入力が無効になる）。
+		return isPuddle() || isSleeping() || super.isImmobile();
 	}
 
 	@Override
@@ -399,7 +433,121 @@ public class FakeMember extends PathfinderMob {
 	}
 
 	@Override
+	public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+		if (isSleeping()) {
+			stopSleeping(); // 殴られたら起きる
+		}
+		return super.hurtServer(level, source, amount);
+	}
+
+	// ---- death / respawn ----
+
+	@Override
+	public void die(DamageSource source) {
+		boolean first = !this.dead && !isRemoved();
+		Component msg = null;
+		if (first && level() instanceof ServerLevel sl) {
+			msg = getCombatTracker().getDeathMessage();
+			keepInventoryOnDeath = sl.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.KEEP_INVENTORY);
+			deathHandled = true;
+			if (isSleeping()) {
+				stopSleeping();
+			}
+			skills().stop();
+			getNavigation().stop();
+			if (sl.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.SHOW_DEATH_MESSAGES)) {
+				sl.getServer().getPlayerList().broadcastSystemMessage(msg, false);
+			}
+			AiBuddyMod.LOGGER.info("[death] {}", msg.getString());
+			postEvent("死んだ: " + msg.getString());
+		}
+		super.die(source);
+	}
+
+	/** 死亡アニメ（約1秒）のあとも RESPAWN_DELAY_TICKS まで体を残し、そこで新しい体に入れ替える。保存されても再開できる。 */
+	@Override
+	protected void tickDeath() {
+		if (level().isClientSide() || isRemoved() || !(level() instanceof ServerLevel sl)) {
+			super.tickDeath();
+			return;
+		}
+		this.deathTime++;
+		if (this.deathTime >= RESPAWN_DELAY_TICKS && !respawned) {
+			respawned = true;
+			try {
+				respawnAsNewBody(sl);
+			} catch (RuntimeException e) {
+				AiBuddyMod.LOGGER.warn("respawn failed for {}", getDisplayNameText(), e);
+			}
+			sl.broadcastEntityEvent(this, (byte) 60);
+			remove(Entity.RemovalReason.KILLED);
+		}
+	}
+
+	private void respawnAsNewBody(ServerLevel from) {
+		net.minecraft.server.MinecraftServer server = from.getServer();
+		ServerLevel target = null;
+		net.minecraft.world.phys.Vec3 pos = null;
+		float yaw = getYRot();
+		boolean lostBed = false;
+		if (bedPos != null && bedDim != null) {
+			ServerLevel bl = server.getLevel(bedDim);
+			if (bl != null && bl.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) {
+				net.minecraft.core.Direction dir = net.minecraft.world.level.block.BedBlock.getBedOrientation(bl, bedPos);
+				java.util.Optional<net.minecraft.world.phys.Vec3> stand =
+						net.minecraft.world.level.block.BedBlock.findStandUpPosition(ModEntities.FAKE_MEMBER, bl, bedPos, dir, getYRot());
+				if (stand.isPresent()) {
+					target = bl;
+					pos = stand.get();
+				}
+			}
+			lostBed = pos == null; // 壊れた/塞がれた
+		}
+		if (pos == null) {
+			// ワールドのスポーン（ネザー・エンドで死んでもオーバーワールドへ）
+			target = server.overworld();
+			net.minecraft.core.BlockPos sp = target.getHeightmapPos(
+					net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, target.getRespawnData().pos());
+			pos = new net.minecraft.world.phys.Vec3(sp.getX() + 0.5, sp.getY(), sp.getZ() + 0.5);
+		}
+		FakeMember n = ModEntities.FAKE_MEMBER.create(target, EntitySpawnReason.TRIGGERED);
+		if (n == null) {
+			return;
+		}
+		n.snapTo(pos.x, pos.y, pos.z, yaw, 0f);
+		n.setPersonaId(personaId);
+		n.setSkinName(getSkinName());
+		n.setDisplayNameText(getDisplayNameText());
+		if (!lostBed) {
+			n.setBed(bedPos, bedDim);
+		}
+		boolean keep = keepInventoryOnDeath || !deathHandled; // 読込直後に死にかけだった個体は持ち物を失わない
+		if (keep) {
+			for (int i = 0; i < inventory.getContainerSize(); i++) {
+				n.inventory.setItem(i, inventory.getItem(i).copy());
+			}
+			for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.VALUES) {
+				if (slot != net.minecraft.world.entity.EquipmentSlot.BODY && slot != net.minecraft.world.entity.EquipmentSlot.SADDLE) {
+					n.setItemSlot(slot, getItemBySlot(slot).copy());
+				}
+			}
+		}
+		// Autopilot の段階・合図済みか・場所の記憶(marks)と、報告済み記録・未処理の出来事を引き継ぐ
+		n.autopilot().load(autopilot().save());
+		n.skills().inheritFrom(skills());
+		n.events.addAll(drainEvents());
+		if (lostBed) {
+			n.postEvent("ベッドが無くなっていた");
+		}
+		n.postEvent("リスポーンした");
+		target.addFreshEntity(n);
+	}
+
+	@Override
 	protected void dropCustomDeathLoot(ServerLevel level, DamageSource source, boolean killedByPlayer) {
+		if (keepInventoryOnDeath) {
+			return; // keepInventory: 落とさず新しい体へ引き継ぐ
+		}
 		super.dropCustomDeathLoot(level, source, killedByPlayer);
 		for (ItemStack stack : inventory.removeAllItems()) {
 			if (!stack.isEmpty()) {
@@ -417,6 +565,10 @@ public class FakeMember extends PathfinderMob {
 		output.putString("Skin", getSkinName());
 		output.putString("DisplayName", getDisplayNameText());
 		output.putFloat("Melt", getMelt());
+		if (bedPos != null && bedDim != null) {
+			output.putLong("BedPos", bedPos.asLong());
+			output.putString("BedDim", bedDim.identifier().toString());
+		}
 		// UNVERIFIED: ItemStack.CODEC (non-optional) assumed correct for storeAsItemList (empty slots are skipped).
 		inventory.storeAsItemList(output.list("Inventory", ItemStack.CODEC));
 		output.store("Autopilot", net.minecraft.nbt.CompoundTag.CODEC, autopilot().save());
@@ -432,6 +584,11 @@ public class FakeMember extends PathfinderMob {
 		this.entityData.set(DATA_MELT, Math.max(0f, Math.min(1f, input.getFloatOr("Melt", 0f))));
 		this.inventory.fromItemList(input.listOrEmpty("Inventory", ItemStack.CODEC));
 		input.read("Autopilot", net.minecraft.nbt.CompoundTag.CODEC).ifPresent(t -> autopilot().load(t));
+		input.getLong("BedPos").ifPresent(l -> {
+			String d = input.getStringOr("BedDim", "minecraft:overworld");
+			this.bedPos = net.minecraft.core.BlockPos.of(l);
+			this.bedDim = net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, Identifier.parse(d));
+		});
 		this.lastAppliedSlowMelt = -1f;
 		if (!level().isClientSide()) {
 			updateMeltSlow();
