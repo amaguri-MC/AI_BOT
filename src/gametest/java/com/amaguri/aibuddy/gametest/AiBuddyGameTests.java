@@ -882,7 +882,7 @@ public class AiBuddyGameTests {
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.DIAMOND_LEGGINGS));
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.DIAMOND_BOOTS));
 		var zs = new java.util.ArrayList<net.minecraft.world.entity.monster.zombie.Zombie>();
-		float[][] at = { { 10.5f, 2.5f }, { 14.5f, 6.5f } };
+		float[][] at = { { 10.5f, 3.5f }, { 14.5f, 5.5f } };
 		for (float[] a : at) {
 			var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, a[0], (float) (floor + 1), a[1]);
 			noBurn(z);

@@ -106,9 +106,6 @@ final class Combat {
 		boolean day = !Observer.isNight(l);
 		// 周囲の敵を整理: こちらを狙っている敵（aggr）と、そうでない敵
 		List<LivingEntity> aggr = aggressors(o, l, st);
-		if (o.tickCount % 8 == 0 && !aggr.isEmpty()) {
-			System.out.println("[combatdbg] y=" + (int) o.getY() + " aggr=" + aggr.size() + " evade=" + st.evade.active + " mode=" + st.evade.mode + " fighting=" + st.fighting + " noFlee=" + (st.noFleeUntil - o.tickCount) + " cd=" + st.cooldown + " target=" + st.target + " hp=" + o.getHealth());
-		}
 		if (st.evade.active) {
 			if (!st.evade.tick(o, aggr, day)) {
 				// どの終わり方でも20秒は再避難しない（避難→再開→また避難の往復を防ぐ）。待ち切ったら30秒
@@ -427,6 +424,14 @@ final class Combat {
 				}
 				moveRel(o, 1.0f, st.strafeDir * 0.7f, true);
 			} else {
+				// 敵の方へ踏み出す先に床が無い（溶岩・崖の縁）なら、止まって敵が来るのを待つ
+				Vec3 dv = tp.subtract(o.position());
+				double dl = Math.max(1e-3, Math.sqrt(dv.x * dv.x + dv.z * dv.z));
+				double step = Math.min(dl, 1.5);
+				if (Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() + dv.x / dl * step, o.getZ() + dv.z / dl * step, o.getY()))) {
+					o.setSprinting(false);
+					return;
+				}
 				o.getMoveControl().setWantedPosition(tp.x, tp.y, tp.z, mod);
 				if (o.onGround() && t.getY() > o.getY() + 0.6) {
 					o.getJumpControl().jump();
