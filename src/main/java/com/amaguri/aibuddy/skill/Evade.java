@@ -233,11 +233,13 @@ final class Evade {
 		// 走る先は床があり落差2以内・溶岩でない方向だけ。無ければ走らず通常の戦いに戻す
 		Vec3 dir = Motion.safeAway(o, away);
 		if (dir == null) {
+			Combat.state(o).dbg = "RUN none"; // TRACE
 			finish(o);
 			return;
 		}
 		o.setSprinting(true);
 		Vec3 to = o.position().add(dir.scale(10));
+		Combat.state(o).dbg = "RUN->" + String.format("%.2f,%.2f", to.x, to.z); // TRACE
 		o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 		if (o.onGround() && o.tickCount % 11 == 0) {
 			o.getJumpControl().jump();

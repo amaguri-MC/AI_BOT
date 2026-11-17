@@ -33,6 +33,9 @@ public class AiBuddyGameTests {
 	private static final int SPEED_FLOOR = 60;
 	/** スタート待ちテスト専用の高さ */
 	private static final int START_FLOOR = 100;
+	/** 寝るテスト専用の高さ（隣のテストの舞台がベッドを上書きしないように） */
+	private static final int SLEEP_FLOOR = 160;
+	private static final int WAKE_FLOOR = 200;
 	private static final int LEN = 48;
 	private static final int WID = 9;
 
@@ -460,32 +463,39 @@ public class AiBuddyGameTests {
 	/** 夜にベッドを持っていれば置いて寝て、そこがリスポーン地点になる。 */
 	@GameTest(maxTicks = 300)
 	public void memberSleepsInPlacedBedAtNightAndSetsRespawn(GameTestHelper h) {
-		buildArena(h);
+		buildArena(h, SLEEP_FLOOR);
 		var server = h.getLevel().getServer();
 		var source = server.createCommandSourceStack().withSuppressedOutput();
 		server.getCommands().performPrefixedCommand(source, "time set night");
-		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		FakeMember m = summon(h, 4.5f, 4.5f, false, SLEEP_FLOOR);
 		m.getInventory().addItem(new ItemStack(Items.BED.pick(net.minecraft.world.item.DyeColor.RED)));
 		h.assertTrue(com.amaguri.aibuddy.skill.SleepRules.shouldSleep(m), "夜でベッドを持っていれば寝てよい");
 		String r = m.skills().startAuto("sleep", new JsonObject());
 		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
-		h.runAfterDelay(30, () -> {
-			boolean ok = m.getBedPos() != null
+		// 寝るとすぐリスポーン地点が更新され、約3秒（60tick）で起きる。寝ている間（起きる前）に、ベッドがリスポーン地点になったことを確かめる
+		boolean[] seen = { false };
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			seen[0] |= m.isSleeping() && m.getBedPos() != null
 					&& m.level().getBlockState(m.getBedPos()).getBlock() instanceof net.minecraft.world.level.block.BedBlock;
-			server.getCommands().performPrefixedCommand(source, "time set day");
-			h.assertTrue(ok, "寝ていてリスポーン地点が更新されている: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos());
-			h.succeed();
+			if (seen[0] && t >= 30) { // 朝にするのは他の寝るテストのボットが寝付いてから
+				server.getCommands().performPrefixedCommand(source, "time set day");
+				h.succeed();
+			} else if (t >= 50) {
+				server.getCommands().performPrefixedCommand(source, "time set day");
+				h.fail("寝ていてリスポーン地点が更新されている: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos() + " status=" + m.skills().status());
+			}
 		});
 	}
 
 	/** 本物のプレイヤーが寝ていなければ、数秒横になってリスポーン地点を更新したら起きる（一晩1回の印も付く）。 */
 	@GameTest(maxTicks = 300)
 	public void memberWakesAfterFewSecondsWhenNoRealPlayerSleeps(GameTestHelper h) {
-		buildArena(h);
+		buildArena(h, WAKE_FLOOR);
 		var server = h.getLevel().getServer();
 		var source = server.createCommandSourceStack().withSuppressedOutput();
 		server.getCommands().performPrefixedCommand(source, "time set night");
-		FakeMember m = summon(h, 4.5f, 4.5f, false);
+		FakeMember m = summon(h, 4.5f, 4.5f, false, WAKE_FLOOR);
 		m.getInventory().addItem(new ItemStack(Items.BED.pick(net.minecraft.world.item.DyeColor.RED)));
 		String r = m.skills().startAuto("sleep", new JsonObject());
 		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
@@ -876,6 +886,7 @@ public class AiBuddyGameTests {
 			}
 		}
 		FakeMember m = summon(h, 12.5f, 4.5f, false, floor);
+		m.addTag("lavatrace"); // TRACE
 		m.getInventory().addItem(new ItemStack(Items.DIAMOND_SWORD)); // ブロックは持たない: 走って逃げるしかない
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
 		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
@@ -895,7 +906,7 @@ public class AiBuddyGameTests {
 					z.setTarget(m);
 				}
 			}
-			if (t >= 44 && t <= 70) {
+			if (t <= 200) {
 				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
 						+ " spr=" + m.isSprinting() + " yaw=" + m.getYRot() + " z0=" + h.relativeVec(zs.get(0).position()) + " z1=" + h.relativeVec(zs.get(1).position()) + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
 			}

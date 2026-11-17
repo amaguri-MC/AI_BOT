@@ -74,6 +74,7 @@ final class Combat {
 		int creeperCd;
 		int backoffTicks;
 		Vec3 backoffFrom = Vec3.ZERO;
+		String dbg = ""; // TRACE
 	}
 
 	private static final Map<FakeMember, State> STATES = new WeakHashMap<>();
@@ -89,6 +90,19 @@ final class Combat {
 
 	/** SkillRunner.tick から毎tick。 */
 	static void tick(FakeMember o) {
+		State ts = state(o); // TRACE
+		ts.dbg = "none";
+		Vec3 v0 = o.getDeltaMovement();
+		tickInner(o);
+		if (o.entityTags().contains("lavatrace")) {
+			System.out.println("[lavadbg] tc=" + o.tickCount + " pos=" + String.format("%.2f,%.2f,%.2f", o.getX(), o.getY(), o.getZ())
+					+ " v0=" + String.format("%.3f,%.3f,%.3f", v0.x, v0.y, v0.z) + " ground=" + o.onGround() + " hurt=" + o.hurtTime
+					+ " fight=" + ts.fighting + " evade=" + ts.evade.active + "/" + ts.evade.mode + " cd=" + ts.cooldown
+					+ " nav=" + o.getNavigation().isInProgress() + " spr=" + o.isSprinting() + " act=" + ts.dbg);
+		}
+	}
+
+	private static void tickInner(FakeMember o) {
 		if (!(o.level() instanceof ServerLevel l) || o.isPuddle() || !o.isAlive()) {
 			State dead = STATES.get(o);
 			if (dead != null && dead.evade.active) {
@@ -120,6 +134,7 @@ final class Combat {
 			if (in != null) {
 				o.getMoveControl().setWantedPosition(in.x, o.getY(), in.z, Motion.speedMod(o, false, 1.0));
 				o.setSprinting(false);
+				st.dbg = "edgeIn->" + String.format("%.2f,%.2f", in.x, in.z);
 				return;
 			}
 		}
@@ -157,6 +172,7 @@ final class Combat {
 				Motion.face(o, creeper.getEyePosition());
 				o.setSprinting(true);
 				Vec3 to = o.position().add(dir.scale(4));
+				st.dbg = "creeperBack";
 				o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 				return;
 			}
@@ -371,12 +387,14 @@ final class Combat {
 			// 導火線: 離れる（盾を構えたまま後退）
 			setShield(o, st, true);
 			moveRel(o, -1.0f, 0.0f, true);
+			st.dbg = "fuseBack";
 			return;
 		}
 		if (st.backTicks > 0) {
 			st.backTicks--;
 			setShield(o, st, wantShield);
 			moveRel(o, -1.0f, st.strafeDir * 0.5f, true);
+			st.dbg = "backTicks " + st.dbg;
 			return;
 		}
 		if (dist > REACH + 0.2) {
@@ -393,6 +411,7 @@ final class Combat {
 				return;
 			}
 			setShield(o, st, wantShield);
+			st.dbg = "approach d=" + String.format("%.2f", dist);
 			approach(o, st, t, dist);
 			return;
 		}
@@ -407,17 +426,20 @@ final class Combat {
 			setShield(o, st, false);
 			boolean falling = !o.onGround() && o.getDeltaMovement().y < -0.05;
 			if (falling || st.cooldown < -8 || o.isInWater()) {
+				st.dbg = "hit ";
 				hit(o, st, t, falling);
 				if (t instanceof Creeper) {
 					st.backTicks = 8;
 				}
 			} else if (o.onGround()) {
-				{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
+				{ if (Motion.safeToJump(o)) { o.getJumpControl().jump(); st.dbg = "jump "; } }
 			}
 			moveRel(o, 0.3f, st.strafeDir * 0.8f, true);
+			st.dbg = "ready " + st.dbg;
 		} else {
 			setShield(o, st, wantShield);
 			moveRel(o, dist < 2.0 ? -0.6f : 0.2f, st.strafeDir * 0.9f, true);
+			st.dbg = "cool " + st.dbg;
 			if (st.cooldown < 6 && o.onGround() && dist < 3.2) {
 				{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
 			}
@@ -443,8 +465,10 @@ final class Combat {
 				double step = Math.min(dl, 1.5);
 				if (Double.isNaN(Motion.groundAt(SkillUtil.level(o), o.getX() + dv.x / dl * step, o.getZ() + dv.z / dl * step, o.getY()))) {
 					o.setSprinting(false);
+					st.dbg += " edgeWait";
 					return;
 				}
+				st.dbg += " direct->" + String.format("%.2f,%.2f", tp.x, tp.z);
 				o.getMoveControl().setWantedPosition(tp.x, tp.y, tp.z, mod);
 				if (o.onGround() && t.getY() > o.getY() + 0.6) {
 					{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
@@ -454,6 +478,7 @@ final class Combat {
 			if (--st.repath <= 0) {
 				st.repath = 20; // 経路の再計算は1秒に1回まで
 				o.getNavigation().moveTo(t, mod);
+				st.dbg += " navTo";
 			}
 		}
 	}
@@ -477,6 +502,7 @@ final class Combat {
 				right = 0;
 			}
 		}
+		state(o).dbg += "moveRel f=" + fwd + " r=" + right + " yaw=" + String.format("%.0f", o.getYRot()) + " | "; // TRACE
 		o.setSprinting(sprint && fwd > 0);
 		double mod = Motion.speedMod(o, o.isSprinting(), 1.0);
 		o.getMoveControl().setWantedPosition(o.getX(), o.getY(), o.getZ(), mod);
