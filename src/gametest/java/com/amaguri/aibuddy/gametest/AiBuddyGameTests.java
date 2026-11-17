@@ -523,6 +523,111 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (6) 深い水の中では泳ぎ姿勢になる（直立のまま移動しない） ----
+
+	private static final int SWIM_FLOOR = 140;
+	private static final int BOAT_FLOOR = 180;
+
+	private static void forceChunks(GameTestHelper h, int floor, int len) {
+		net.minecraft.core.BlockPos ca = h.absolutePos(new net.minecraft.core.BlockPos(0, floor, 0));
+		net.minecraft.core.BlockPos cb = h.absolutePos(new net.minecraft.core.BlockPos(len - 1, floor, WID - 1));
+		for (int cx = (ca.getX() >> 4) - 1; cx <= (cb.getX() >> 4) + 1; cx++) {
+			for (int cz = (ca.getZ() >> 4) - 1; cz <= (cb.getZ() >> 4) + 1; cz++) {
+				h.getLevel().setChunkForced(cx, cz, true);
+			}
+		}
+	}
+
+	/**
+	 * 水路。x が waterFrom..waterTo の間は水（深さ depth、水面は floor の高さ）、その外は陸（床は floor）。
+	 * 上は開けてある（屋根なし）。両端と横はガラスの壁。
+	 */
+	private static void buildCanal(GameTestHelper h, int floor, int len, int waterFrom, int waterTo, int depth) {
+		forceChunks(h, floor, len);
+		for (int x = 0; x < len; x++) {
+			for (int z = 0; z < WID; z++) {
+				boolean wallZ = z == 0 || z == WID - 1;
+				boolean water = x >= waterFrom && x <= waterTo;
+				int bottom = water ? floor - depth : floor;
+				for (int y = floor - depth; y <= floor + 5; y++) {
+					net.minecraft.world.level.block.Block b;
+					boolean wallX = x == 0 || x == len - 1;
+					if (wallZ || wallX) {
+						b = Blocks.GLASS;
+					} else if (y < bottom) {
+						b = Blocks.AIR;
+					} else if (y == bottom && !water) {
+						b = Blocks.DIRT;
+					} else if (water && y == bottom) {
+						b = Blocks.DIRT;
+					} else if (water && y <= floor) {
+						b = Blocks.WATER;
+					} else {
+						b = Blocks.AIR;
+					}
+					h.setBlock(x, y, z, b);
+				}
+			}
+		}
+	}
+
+	@GameTest(maxTicks = 300)
+	public void swimsInSwimmingPoseInDeepWater(GameTestHelper h) {
+		final int floor = SWIM_FLOOR;
+		buildCanal(h, floor, 20, 1, 18, 5);
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, 4.5f, (float) (floor - 2), 4.5f);
+		m.autopilot().setEnabled(false);
+		Vec3 target = h.absoluteVec(new Vec3(17.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (t % 10 == 0) {
+				System.out.println("[swimtest] t=" + t + " rel=" + rel(h, m) + " pose=" + m.getPose() + " swimming=" + m.isSwimming()
+						+ " inWater=" + m.isInWater() + " status=" + m.skills().status());
+			}
+			if (t >= 20 && m.isInWater() && m.getPose() == net.minecraft.world.entity.Pose.SWIMMING && m.isVisuallySwimming()) {
+				double y = rel(h, m).y;
+				h.assertTrue(y > floor - 3.0, "底を歩いている y=" + y);
+				h.succeed();
+			} else if (t >= 200) {
+				h.assertTrue(false, "泳ぎ姿勢にならない pose=" + m.getPose() + " swimming=" + m.isSwimming() + " inWater=" + m.isInWater());
+			}
+		});
+	}
+
+	// ---- (7) 30ブロックの水路は、板材5からボートを作って渡る ----
+
+	@GameTest(maxTicks = 900)
+	public void crossesLongCanalByBoat(GameTestHelper h) {
+		final int floor = BOAT_FLOOR;
+		buildCanal(h, floor, 48, 4, 36, 3); // 水面33ブロック
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.OAK_PLANKS, 5));
+		Vec3 target = h.absoluteVec(new Vec3(42.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			boolean rode;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (m.isPassenger()) {
+				st.rode = true;
+			}
+			if (t % 20 == 0) {
+				System.out.println("[boattest] t=" + t + " rel=" + rel(h, m) + " passenger=" + m.isPassenger() + " inWater=" + m.isInWater()
+						+ " status=" + m.skills().status());
+			}
+			Vec3 p = rel(h, m);
+			if (st.rode && p.x > 40.0 && !m.isPassenger()) {
+				h.succeed();
+			} else if (t >= 850) {
+				h.assertTrue(false, "ボートで渡れない rode=" + st.rode + " rel=" + p + " status=" + m.skills().status());
+			}
+		});
+	}
+
 	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
 		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
 		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
