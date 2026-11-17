@@ -107,7 +107,7 @@ final class Combat {
 		// 周囲の敵を整理: こちらを狙っている敵（aggr）と、そうでない敵
 		List<LivingEntity> aggr = aggressors(o, l, st);
 		if (o.tickCount % 8 == 0 && !aggr.isEmpty()) {
-			System.out.println("[combatdbg] aggr=" + aggr.size() + " evade=" + st.evade.active + " mode=" + st.evade.mode + " fighting=" + st.fighting + " noFlee=" + (st.noFleeUntil - o.tickCount) + " cd=" + st.cooldown + " target=" + st.target + " hp=" + o.getHealth());
+			System.out.println("[combatdbg] y=" + (int) o.getY() + " aggr=" + aggr.size() + " evade=" + st.evade.active + " mode=" + st.evade.mode + " fighting=" + st.fighting + " noFlee=" + (st.noFleeUntil - o.tickCount) + " cd=" + st.cooldown + " target=" + st.target + " hp=" + o.getHealth());
 		}
 		if (st.evade.active) {
 			if (!st.evade.tick(o, aggr, day)) {
