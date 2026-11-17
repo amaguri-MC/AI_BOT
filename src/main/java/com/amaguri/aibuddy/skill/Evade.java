@@ -33,7 +33,8 @@ final class Evade {
 	private Vec3 home;
 	private final Motion.Pillar pillar = new Motion.Pillar();
 	private Digger digger;
-	private int pauseTimer;
+	private final java.util.ArrayDeque<Integer> builds = new java.util.ArrayDeque<>();
+	private boolean restricted;
 	private int descendTicks;
 
 	boolean waitedOut() {
@@ -63,16 +64,40 @@ final class Evade {
 		for (LivingEntity e : aggr) {
 			ranged |= Combat.isRanged(e);
 		}
-		int blocks = Motion.scaffoldCount(o);
+		ServerLevel lv = SkillUtil.level(o);
+		// ネザー・エンドでは橋と横への降り方を使わない（溶岩・奈落）
+		restricted = SkillUtil.isNether(o) || SkillUtil.inDimension(o, net.minecraft.world.level.Level.END);
+		// 同じ場所で何度も建て直してブロックを使い切らない: 2分に2回まで
+		while (!builds.isEmpty() && o.tickCount - builds.peekFirst() > 2400) {
+			builds.pollFirst();
+		}
+		int blocks = builds.size() >= 2 ? 0 : Motion.scaffoldCount(o);
+		o.autopilot().holdForEvade(true);
 		if (ranged && blocks >= 2) {
 			mode = Mode.COVER;
 		} else if (blocks >= PILLAR_HEIGHT && headroom(o)) {
 			mode = Mode.PILLAR;
-		} else if (blocks >= 4 && gapAhead(o)) {
+		} else if (!restricted && blocks >= 4 && gapAhead(o) && bridgeSafe(o)) {
 			mode = Mode.BRIDGE;
 		} else {
 			mode = Mode.RUN;
 		}
+		if (mode != Mode.RUN) {
+			builds.addLast(o.tickCount);
+		}
+	}
+
+	/** 逃げる方向の先が溶岩・奈落の上でないか。 */
+	private boolean bridgeSafe(FakeMember o) {
+		ServerLevel l = SkillUtil.level(o);
+		BlockPos f = o.blockPosition().below();
+		for (int k = 1; k <= 4; k++) {
+			BlockPos c = f.offset((int) Math.round(away.x * k), 0, (int) Math.round(away.z * k));
+			if (Motion.hazardBelow(l, c)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static Vec3 awayFrom(FakeMember o, List<LivingEntity> aggr) {
@@ -117,10 +142,7 @@ final class Evade {
 		}
 		ServerLevel l = SkillUtil.level(o);
 		ticks++;
-		if (pauseTimer-- <= 0) {
-			pauseTimer = 20;
-			o.autopilot().pause(30, "避難中"); // 公開APIだけ。避難が終われば自然に切れて進行に戻る
-		}
+		o.autopilot().holdForEvade(true); // pause は使わず、進行の tick だけ止める
 		double nearest = Double.MAX_VALUE;
 		for (LivingEntity e : aggr) {
 			nearest = Math.min(nearest, e.distanceTo(o));
@@ -161,15 +183,29 @@ final class Evade {
 				}
 			}
 			case DESCEND -> {
-				// 柱の上なら安全に（3段以内）横へ降りる。壁の陰ならそのまま終わり
 				descendTicks++;
 				boolean high = o.getY() > startY + 1.5;
-				if (high && descendTicks < 60) {
-					Vec3 to = o.position().add(away.scale(2.5)); // 敵から離れる側へ降りる
-					o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, false, 1.0));
-				} else {
+				if (!high || descendTicks > 200) {
 					finish(o);
 					return false;
+				}
+				if (restricted) {
+					// ネザー・エンド: 横へ降りず、真下を掘って降りる
+					if (!digDown(o, l)) {
+						finish(o);
+						return false;
+					}
+				} else {
+					Vec3 d = Motion.safeAway(o, away);
+					if (d == null) {
+						if (!digDown(o, l)) {
+							finish(o);
+							return false;
+						}
+					} else {
+						Vec3 to = o.position().add(d.scale(2.5)); // 床があり落差2以内と確認済みの側へ降りる
+						o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, false, 1.0));
+					}
 				}
 			}
 		}
@@ -180,10 +216,28 @@ final class Evade {
 		return active;
 	}
 
+	/** 足元の柱を1つ掘る。掘れなければ false。 */
+	private boolean digDown(FakeMember o, ServerLevel l) {
+		BlockPos below = o.blockPosition().below();
+		if (below.getY() < startY) {
+			return false;
+		}
+		if (!digger.active() && !digger.begin(below)) {
+			return false;
+		}
+		return digger.tick() != Digger.ABORTED;
+	}
+
 	private void run(FakeMember o, ServerLevel l, double nearest) {
 		runTicks++;
+		// 走る先は床があり落差2以内・溶岩でない方向だけ。無ければ走らず通常の戦いに戻す
+		Vec3 dir = Motion.safeAway(o, away);
+		if (dir == null) {
+			finish(o);
+			return;
+		}
 		o.setSprinting(true);
-		Vec3 to = o.position().add(away.scale(10));
+		Vec3 to = o.position().add(dir.scale(10));
 		o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 		if (o.onGround() && o.tickCount % 11 == 0) {
 			o.getJumpControl().jump();
@@ -229,6 +283,11 @@ final class Evade {
 			return;
 		}
 		o.setShiftKeyDown(true);
+		if (restricted || Motion.hazardBelow(l, next)) {
+			o.setShiftKeyDown(false);
+			mode = Mode.RUN; // 溶岩・奈落の上には橋を出さない
+			return;
+		}
 		if (!l.getBlockState(next).blocksMotion()) {
 			if (!Motion.placeScaffold(o, next)) {
 				o.setShiftKeyDown(false);
@@ -244,6 +303,7 @@ final class Evade {
 
 	private void finish(FakeMember o) {
 		active = false;
+		o.autopilot().holdForEvade(false);
 		o.setShiftKeyDown(false);
 		o.setSprinting(false);
 		if (digger != null) {

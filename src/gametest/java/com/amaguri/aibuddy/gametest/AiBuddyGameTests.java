@@ -847,11 +847,138 @@ public class AiBuddyGameTests {
 			if (t % 20 == 0) {
 				System.out.println("[creepertest] t=" + t + " dist=" + m.distanceTo(c) + " hp=" + m.getHealth() + " creeperHp=" + c.getHealth());
 			}
-			if (t == 40) {
+			if (t == 24) { // 後退は1回あたり最大6ブロック。止まったあとの追いつかれる前に測る
 				h.assertTrue(c.isAlive() && c.getHealth() >= c.getMaxHealth() - 0.01, "クリーパーを殴った");
 				h.assertTrue(m.getHealth() >= m.getMaxHealth() - 0.01, "クリーパーに爆破された hp=" + m.getHealth());
 				h.assertTrue(m.distanceTo(c) >= 6.0, "クリーパーから離れない 距離 " + m.distanceTo(c));
 				h.succeed();
+			}
+		});
+	}
+
+	// ---- (12) 避難の安全確認・往復しない・元の行動に戻る ----
+
+	private static final int LAVA_FLOOR = 40;
+	private static final int SPIDER_FLOOR = 80;
+	private static final int RESUME_FLOOR = 120;
+
+	@GameTest(maxTicks = 300)
+	public void doesNotFallIntoLavaWhileEvading(GameTestHelper h) {
+		final int floor = LAVA_FLOOR;
+		buildHall(h, floor, 26, 7);
+		// 5x5 の土の足場（x=10..14, z=2..6）以外は、床の高さを溶岩にする
+		for (int x = 1; x < 25; x++) {
+			for (int z = 1; z < WID - 1; z++) {
+				boolean platform = x >= 10 && x <= 14 && z >= 2 && z <= 6;
+				if (!platform) {
+					h.setBlock(x, floor, z, Blocks.LAVA);
+				}
+			}
+		}
+		FakeMember m = summon(h, 12.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.DIAMOND_SWORD)); // ブロックは持たない: 走って逃げるしかない
+		var zs = new java.util.ArrayList<net.minecraft.world.entity.monster.zombie.Zombie>();
+		float[][] at = { { 10.5f, 2.5f }, { 14.5f, 6.5f } };
+		for (float[] a : at) {
+			var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, a[0], (float) (floor + 1), a[1]);
+			noBurn(z);
+			zs.add(z);
+		}
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			for (var z : zs) {
+				if (z.isAlive()) {
+					z.setTarget(m);
+				}
+			}
+			h.assertTrue(!m.isInLava() && !m.isOnFire() || !m.isAlive(), "溶岩に落ちた rel=" + rel(h, m));
+			if (t >= 200) {
+				h.succeed();
+			}
+		});
+	}
+
+	@GameTest(maxTicks = 500)
+	public void fightsBackAfterRunningFromTwoSpidersWithoutBlocks(GameTestHelper h) {
+		final int floor = SPIDER_FLOOR;
+		buildHall(h, floor, 40, 6);
+		FakeMember m = summon(h, 20.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.IRON_SWORD)); // ブロック0個
+		var sp = new java.util.ArrayList<net.minecraft.world.entity.monster.spider.Spider>();
+		float[][] at = { { 8.5f, 3.5f }, { 8.5f, 5.5f } };
+		for (float[] a : at) {
+			sp.add(h.spawn(net.minecraft.world.entity.EntityTypes.SPIDER, a[0], (float) (floor + 1), a[1]));
+		}
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			for (var s2 : sp) {
+				if (s2.isAlive()) {
+					s2.setTarget(m);
+				}
+			}
+			if (t % 40 == 0) {
+				System.out.println("[spidertest] t=" + t + " rel=" + rel(h, m) + " hp=" + m.getHealth() + " spiderHp="
+						+ sp.get(0).getHealth() + "," + sp.get(1).getHealth());
+			}
+			boolean hit = sp.stream().anyMatch(s2 -> !s2.isAlive() || s2.getHealth() < s2.getMaxHealth() - 0.01);
+			if (hit) {
+				h.succeed(); // 走って逃げ続けず、いつかは反撃に切り替わる
+			} else if (t >= 450 || !m.isAlive()) {
+				h.assertTrue(false, "反撃に切り替わらない rel=" + rel(h, m) + " hp=" + m.getHealth());
+			}
+		});
+	}
+
+	@GameTest(maxTicks = 900)
+	public void resumesOriginalSkillAfterEvading(GameTestHelper h) {
+		final int floor = RESUME_FLOOR;
+		buildHall(h, floor, 40, 10);
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 12));
+		Vec3 target = h.absoluteVec(new Vec3(34.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var zs = new java.util.ArrayList<net.minecraft.world.entity.monster.zombie.Zombie>();
+		var st = new Object() {
+			boolean elevated;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			Vec3 p = rel(h, m);
+			if (t == 15) {
+				float[][] off = { { 4f, 0f }, { -3f, 2f }, { 0f, -3f } };
+				for (float[] a : off) {
+					var z = h.spawn(net.minecraft.world.entity.EntityTypes.ZOMBIE, (float) p.x + a[0], (float) (floor + 1), (float) p.z + a[1]);
+					noBurn(z);
+					zs.add(z);
+				}
+			}
+			if (t >= 15 && t < 120) {
+				for (var z : zs) {
+					if (z.isAlive()) {
+						z.setTarget(m);
+					}
+				}
+			}
+			if (t == 120) {
+				for (var z : zs) {
+					z.discard(); // 敵が去る → 避難が終わる
+				}
+			}
+			if (p.y >= floor + 1 + 2.5) {
+				st.elevated = true;
+			}
+			if (t % 40 == 0) {
+				System.out.println("[resumetest] t=" + t + " rel=" + p + " status=" + m.skills().status());
+			}
+			if (t > 130 && !m.skills().isBusy()) {
+				h.assertTrue(st.elevated, "避難していない（前提）");
+				String res = m.skills().lastResult();
+				h.assertTrue(!res.isEmpty() && !res.startsWith("止めた") && !res.startsWith("失敗") && p.x > 30.0,
+						"元の行動の結果が返らない lastResult=" + res + " rel=" + p);
+				h.succeed();
+			} else if (t >= 850) {
+				h.assertTrue(false, "元の行動が終わらない status=" + m.skills().status() + " rel=" + p);
 			}
 		});
 	}

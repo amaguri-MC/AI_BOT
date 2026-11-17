@@ -55,6 +55,8 @@ public final class Autopilot {
 	private int waitTicks;
 	private Stage stage = Stage.WOOD;
 	private int pauseTicks;
+	/** 避難中（Combat/Evade）: tick を飛ばすだけ。ownSkill・制限時間・pause は何も壊さない。 */
+	private boolean evadeHold;
 	private String pauseWhy = "";
 	private int idle;
 	private int unwatched;
@@ -112,6 +114,9 @@ public final class Autopilot {
 				ff.tick();
 			}
 			return;
+		}
+		if (evadeHold) {
+			return; // 避難中は進行を止める（中断された行動の制限時間は進めない）
 		}
 		if (pauseTicks > 0) {
 			if (--pauseTicks == 0) {
@@ -194,6 +199,11 @@ public final class Autopilot {
 			ff.stop(true);
 		}
 		ownSkill = false;
+	}
+
+	/** 避難（Evade）の間だけ進行を止める。pause と別経路で、行動・制限時間・早送りの状態を壊さない。 */
+	public void holdForEvade(boolean on) {
+		evadeHold = on;
 	}
 
 	public void resume() {

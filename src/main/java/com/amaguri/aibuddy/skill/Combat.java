@@ -71,6 +71,9 @@ final class Combat {
 		/** この tickCount までは避難を始めない（60秒待ったあとは慎重に進む） */
 		int noFleeUntil;
 		boolean backingOff;
+		int creeperCd;
+		int backoffTicks;
+		Vec3 backoffFrom = Vec3.ZERO;
 	}
 
 	private static final Map<FakeMember, State> STATES = new WeakHashMap<>();
@@ -87,6 +90,10 @@ final class Combat {
 	/** SkillRunner.tick から毎tick。 */
 	static void tick(FakeMember o) {
 		if (!(o.level() instanceof ServerLevel l) || o.isPuddle() || !o.isAlive()) {
+			State dead = STATES.get(o);
+			if (dead != null && dead.evade.active) {
+				dead.evade.abort(o); // Autopilot の止めを必ず解く
+			}
 			return;
 		}
 		State st = state(o);
@@ -101,9 +108,8 @@ final class Combat {
 		List<LivingEntity> aggr = aggressors(o, l, st);
 		if (st.evade.active) {
 			if (!st.evade.tick(o, aggr, day)) {
-				if (st.evade.waitedOut()) {
-					st.noFleeUntil = o.tickCount + 600; // 待ち切った: 敵が残っていても慎重に進む
-				}
+				// どの終わり方でも20秒は再避難しない（避難→再開→また避難の往復を防ぐ）。待ち切ったら30秒
+				st.noFleeUntil = o.tickCount + (st.evade.waitedOut() ? 600 : 400);
 				endFight(o, st);
 			}
 			return;
@@ -115,15 +121,35 @@ final class Combat {
 			st.evade.tick(o, aggr, day);
 			return;
 		}
-		// クリーパーは殴らない。近づかれたら離れる
-		Creeper creeper = nearestCreeper(o, l);
-		st.backingOff = false;
+		// クリーパーは殴らない。近づかれたら離れる。ただし1回あたり最大6ブロック・40tick、そのあと4秒は後退しない（往復しない）。
+		// 後退先は床があり落差2以内・溶岩でない向きだけ
+		if (st.creeperCd > 0) {
+			st.creeperCd--;
+		}
+		Creeper creeper = st.creeperCd > 0 ? null : nearestCreeper(o, l);
 		if (creeper != null && !purposeful) {
-			st.backingOff = true;
-			st.calm = 0;
-			Motion.face(o, creeper.getEyePosition());
-			moveRel(o, -1.0f, 0.0f, true);
-			return;
+			if (!st.backingOff) {
+				st.backingOff = true;
+				st.backoffFrom = o.position();
+				st.backoffTicks = 0;
+			}
+			st.backoffTicks++;
+			Vec3 away = o.position().subtract(creeper.position());
+			Vec3 dir = Motion.safeAway(o, away);
+			double moved = SkillUtil.horiz(o.position(), st.backoffFrom);
+			if (dir == null || moved >= 6.0 || st.backoffTicks > 40) {
+				st.backingOff = false;
+				st.creeperCd = 80;
+			} else {
+				st.calm = 0;
+				Motion.face(o, creeper.getEyePosition());
+				o.setSprinting(true);
+				Vec3 to = o.position().add(dir.scale(4));
+				o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
+				return;
+			}
+		} else {
+			st.backingOff = false;
 		}
 		LivingEntity threat = scan(o, l, st, aggr, purposeful);
 		if (threat == null) {
@@ -239,7 +265,7 @@ final class Combat {
 		double bd = Double.MAX_VALUE;
 		for (LivingEntity e : list) {
 			double d = e.distanceToSqr(o);
-			if (isIgnored(o, st, e) || e instanceof Creeper) {
+			if (isIgnored(o, st, e) || (e instanceof Creeper && st.creeperCd <= 0)) {
 				continue;
 			}
 			if (!purposeful && !aggr.contains(e) && d > 2.2 * 2.2) {

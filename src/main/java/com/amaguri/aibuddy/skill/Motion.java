@@ -347,6 +347,89 @@ final class Motion {
 		return false;
 	}
 
+	// ---- 着地点の安全確認 ----
+
+	/**
+	 * (x,z) で立てる足元の高さ。refY の1つ上から2段下まで（落差2以内）に、溶岩・火・マグマでない床があり、
+	 * その上2マスが空いているところ。無ければ NaN（奈落・崖・溶岩）。水面は床として許す。
+	 */
+	static double groundAt(ServerLevel l, double x, double z, double refY) {
+		int bx = Mth.floor(x);
+		int bz = Mth.floor(z);
+		int feet = Mth.floor(refY);
+		if (!l.hasChunkAt(new BlockPos(bx, feet, bz))) {
+			return Double.NaN;
+		}
+		for (int fy = feet; fy >= feet - 3; fy--) {
+			BlockPos fl = new BlockPos(bx, fy, bz);
+			BlockState st = l.getBlockState(fl);
+			boolean water = st.is(Blocks.WATER);
+			if (!st.blocksMotion() && !water) {
+				if (st.is(Blocks.LAVA) || isDeadly(st)) {
+					return Double.NaN;
+				}
+				continue;
+			}
+			if (isDeadly(st) || st.is(Blocks.LAVA)) {
+				return Double.NaN;
+			}
+			BlockState a1 = l.getBlockState(fl.above());
+			BlockState a2 = l.getBlockState(fl.above(2));
+			if (a1.blocksMotion() || a2.blocksMotion() || a1.is(Blocks.LAVA) || a2.is(Blocks.LAVA) || isDeadly(a1)) {
+				return Double.NaN;
+			}
+			return fy + 1.0;
+		}
+		return Double.NaN;
+	}
+
+	/** away の向きを基準に、3歩先まで安全に降りられる方向（単位ベクトル）。無ければ null。 */
+	static Vec3 safeAway(FakeMember o, Vec3 away) {
+		ServerLevel l = SkillUtil.level(o);
+		double len = Math.sqrt(away.x * away.x + away.z * away.z);
+		if (len < 1e-4) {
+			away = new Vec3(1, 0, 0);
+			len = 1;
+		}
+		double ax = away.x / len;
+		double az = away.z / len;
+		float[] offs = { 0, 25, -25, 50, -50, 80, -80, 120, -120 };
+		for (float off : offs) {
+			double r = Math.toRadians(off);
+			double dx = ax * Math.cos(r) - az * Math.sin(r);
+			double dz = ax * Math.sin(r) + az * Math.cos(r);
+			boolean ok = true;
+			for (double k : new double[] { 1.5, 3.0, 5.0 }) {
+				if (Double.isNaN(groundAt(l, o.getX() + dx * k, o.getZ() + dz * k, o.getY()))) {
+					ok = false;
+					break;
+				}
+			}
+			if (ok) {
+				return new Vec3(dx, 0, dz);
+			}
+		}
+		return null;
+	}
+
+	/** pos の真下（40ブロック以内）に溶岩があるか、床が無く奈落か。橋を掛けてよいかの判定用。 */
+	static boolean hazardBelow(ServerLevel l, BlockPos pos) {
+		for (int d = 1; d <= 40; d++) {
+			BlockPos q = pos.below(d);
+			if (q.getY() < l.getMinY()) {
+				return true;
+			}
+			BlockState st = l.getBlockState(q);
+			if (st.is(Blocks.LAVA) || isDeadly(st)) {
+				return true;
+			}
+			if (st.blocksMotion() || st.is(Blocks.WATER)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// ---- 溶岩ブレーキ ----
 
 	static boolean isDeadly(BlockState s) {
