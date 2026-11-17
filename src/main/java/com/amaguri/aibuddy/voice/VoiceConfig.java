@@ -20,7 +20,7 @@ public final class VoiceConfig {
 	public boolean enabled = true;
 	public String whisperUrl = "http://127.0.0.1:8080/inference";
 	public String language = "ja";
-	/** この半径(ブロック)内に偽物が居るプレイヤーの声だけ処理する。 */
+	/** この半径(ブロック)内にAIボットが居るプレイヤーの声だけ処理する。 */
 	public double radius = 64;
 
 	public static VoiceConfig load() {

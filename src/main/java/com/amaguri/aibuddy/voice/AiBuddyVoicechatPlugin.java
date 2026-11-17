@@ -50,7 +50,7 @@ public class AiBuddyVoicechatPlugin implements VoicechatPlugin {
 		VoicechatConnection con = e.getSenderConnection();
 		if (con == null || con.getPlayer() == null) return;
 		UUID id = con.getPlayer().getUuid();
-		if (!processor.isNear(id)) return; // 近くに偽物が居ない人の声は処理しない
+		if (!processor.isNear(id)) return; // 近くにAIボットが居ない人の声は処理しない
 		byte[] opus = e.getPacket().getOpusEncodedData();
 		if (opus == null || opus.length == 0) return; // 空パケットは送信終了の合図
 		OpusDecoder dec = decoders.computeIfAbsent(id, k -> api.createDecoder());

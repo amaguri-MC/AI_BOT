@@ -39,7 +39,7 @@ final class VoiceProcessor {
 	private final VoiceConfig cfg;
 	private final WhisperClient whisper = new WhisperClient();
 	private final Map<UUID, Buf> bufs = new ConcurrentHashMap<>();
-	/** 近くに偽物が居るプレイヤー。メインスレッドで更新し、音声スレッドから読む。 */
+	/** 近くにAIボットが居るプレイヤー。メインスレッドで更新し、音声スレッドから読む。 */
 	private final Map<UUID, Boolean> nearPlayers = new ConcurrentHashMap<>();
 	private final ExecutorService worker = Executors.newSingleThreadExecutor(daemon("aibuddy-whisper"));
 	private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(daemon("aibuddy-voice-timer"));
