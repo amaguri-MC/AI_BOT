@@ -236,7 +236,7 @@ final class Nav {
 		pathTarget = seg;
 		nav.stop();
 		if (Math.abs(dy) < 2.5 && flatAhead(dx, dz)) {
-			directTicks = 20;
+			directTicks = 10;
 		}
 	}
 
@@ -246,10 +246,37 @@ final class Nav {
 			return false;
 		}
 		ServerLevel l = SkillUtil.level(o);
-		for (int k = 1; k <= 3; k++) {
+		for (int k = 1; k <= 7; k++) {
 			BlockPos c = BlockPos.containing(o.getX() + dx / h * k, o.getY(), o.getZ() + dz / h * k);
 			if (l.getBlockState(c).blocksMotion() || l.getBlockState(c.above()).blocksMotion()
 					|| !l.getBlockState(c.below()).blocksMotion() || Motion.isDeadly(l.getBlockState(c.below()))) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** 1〜2ブロック先に立てる床があるか（落差2以内・溶岩でない）。 */
+	private boolean flatNear(double dx, double dz) {
+		double h = Math.sqrt(dx * dx + dz * dz);
+		if (h < 0.3) {
+			return true;
+		}
+		ServerLevel l = SkillUtil.level(o);
+		for (int k = 1; k <= 2; k++) {
+			BlockPos c = BlockPos.containing(o.getX() + dx / h * k, o.getY(), o.getZ() + dz / h * k);
+			boolean floor = false;
+			for (int d = 1; d <= 3; d++) {
+				var st = l.getBlockState(c.below(d));
+				if (Motion.isDeadly(st)) {
+					return false;
+				}
+				if (st.blocksMotion()) {
+					floor = true;
+					break;
+				}
+			}
+			if (!floor) {
 				return false;
 			}
 		}
@@ -269,6 +296,11 @@ final class Nav {
 		if (directTicks > 0) {
 			directTicks--;
 			Vec3 gt = segmentTarget0();
+			// 直進中も毎tick 1〜2ブロック先の床を見直し、崖（落差2超）・溶岩なら即やめる
+			if (!flatNear(gt.x - o.getX(), gt.z - o.getZ())) {
+				directTicks = 0;
+				o.getMoveControl().setWantedPosition(o.getX(), o.getY(), o.getZ(), 0);
+			}
 			o.getMoveControl().setWantedPosition(gt.x, gt.y, gt.z, mod);
 			if (o.onGround() && gt.y > o.getY() + 0.6) {
 				o.getJumpControl().jump();
