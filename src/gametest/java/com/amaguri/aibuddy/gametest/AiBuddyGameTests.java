@@ -897,7 +897,7 @@ public class AiBuddyGameTests {
 			}
 			if (t >= 16 && t <= 48) {
 				System.out.println("[lavatest] t=" + t + " rel=" + rel(h, m) + " v=" + m.getDeltaMovement() + " hp=" + m.getHealth()
-						+ " spr=" + m.isSprinting() + " yaw=" + m.getYRot() + " z0=" + rel(h, zs.get(0)) + " z1=" + rel(h, zs.get(1)) + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
+						+ " spr=" + m.isSprinting() + " yaw=" + m.getYRot() + " z0=" + h.relativeVec(zs.get(0).position()) + " z1=" + h.relativeVec(zs.get(1).position()) + " zd=" + zs.get(0).distanceTo(m) + "," + zs.get(1).distanceTo(m) + " zhp=" + zs.get(0).getHealth() + "," + zs.get(1).getHealth());
 			}
 			h.assertTrue(m.isAlive() && !m.isInLava() && !m.isOnFire(), "溶岩に落ちた/死んだ rel=" + rel(h, m) + " hp=" + m.getHealth());
 			if (t >= 200) {
