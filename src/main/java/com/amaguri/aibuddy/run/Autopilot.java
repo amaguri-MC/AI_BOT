@@ -23,7 +23,7 @@ import net.minecraft.world.level.Level;
 /**
  * 自動進行。行動を決めるのはここで、脳（AI）は喋るのとたまの割り込み（ついていく等）だけ。脳を待って止まらない。
  * 毎tick:
- *  1. 見られているか（同じ次元で64ブロック内にプレイヤー。スペクテイターも「見ている」）を数え、20秒見られていなければ早送り（FastForward）。
+ *  1. 見られているか（同じ次元で追跡距離＝160ブロック内にプレイヤー。スペクテイターも「見ている」）を数え、20秒見られていなければ早送り（FastForward）。
  *  2. 段階（Stage）が終わっていれば postEvent して次へ。
  *  3. 手が空いて0.5秒たったら Plan の表から次の行動を SkillRunner に出す（どの段階でも2秒以内）。
  *  4. 動いているスキルが表の制限時間を超えたら打ち切って次の行へ（迷い続けない）。
@@ -31,7 +31,14 @@ import net.minecraft.world.level.Level;
 public final class Autopilot {
 	static final Logger LOGGER = LoggerFactory.getLogger("aibuddy-run");
 
-	static final double WATCH_RANGE = 64.0;
+	/** 「見ている」の距離。クライアントに姿が送られる追跡距離（clientTrackingRange チャンク×16＝160）に合わせる。 */
+	static double watchRange() {
+		try {
+			return Math.max(64.0, com.amaguri.aibuddy.entity.ModEntities.FAKE_MEMBER.clientTrackingRange() * 16.0);
+		} catch (RuntimeException e) {
+			return 160.0;
+		}
+	}
 	static final int UNWATCHED_TO_FF = 20 * 20;
 	private static final int IDLE_TO_ACT = 10;
 	private static final int MIN_TIMEOUT = 20 * 30;
@@ -95,10 +102,12 @@ public final class Autopilot {
 			return;
 		}
 		if (pauseTicks > 0) {
-			pauseTicks--;
+			if (--pauseTicks == 0) {
+				endBrainFollow();
+			}
 			return;
 		}
-		if (unwatched >= UNWATCHED_TO_FF && stage != Stage.DONE) {
+		if (unwatched >= UNWATCHED_TO_FF && stage != Stage.DONE && !ff.walkOnly(stage)) {
 			ff.start();
 			return;
 		}
@@ -140,6 +149,9 @@ public final class Autopilot {
 	}
 
 	public void resume() {
+		if (pauseTicks > 0) {
+			endBrainFollow();
+		}
 		pauseTicks = 0;
 		pauseWhy = "";
 		idle = IDLE_TO_ACT;
@@ -269,6 +281,16 @@ public final class Autopilot {
 	}
 
 	// ================= 内部 =================
+
+	/** 脳が始めた「ついていく」は一時停止の期限で止めて、自分の進行に戻る（60秒の約束）。 */
+	private void endBrainFollow() {
+		SkillRunner r = o.skills();
+		if (!ownSkill && r.isBusy() && r.currentName().startsWith("Follow")) {
+			r.stop();
+			LOGGER.info("[run] {} ついていく期限切れ → 進行に戻る", o.getDisplayNameText());
+		}
+		idle = IDLE_TO_ACT;
+	}
 
 	int eyesNeeded() {
 		return eyesNeeded;
@@ -444,10 +466,16 @@ public final class Autopilot {
 		coolUntil.put(key, now + Math.min(20L * 60, 100L * n));
 	}
 
-	/** 同じ次元で64ブロック内にプレイヤー（スペクテイターも含む）がいれば「見られている」。 */
+	/** 同じ次元で追跡距離（160）内にプレイヤー（スペクテイターも含む）がいれば「見られている」。 */
 	boolean isWatched(ServerLevel sl) {
+		return watchedAt(sl, o.position());
+	}
+
+	/** その次元のその場所が、誰かの追跡距離内か（早送りの飛び先の確認にも使う）。 */
+	static boolean watchedAt(ServerLevel sl, net.minecraft.world.phys.Vec3 at) {
+		double r = watchRange();
 		for (ServerPlayer p : sl.getServer().getPlayerList().getPlayers()) {
-			if (p.level() == sl && p.distanceToSqr(o) <= WATCH_RANGE * WATCH_RANGE) {
+			if (p.level() == sl && p.position().distanceToSqr(at) <= r * r) {
 				return true;
 			}
 		}

@@ -61,6 +61,10 @@ final class Combat {
 		boolean retreating;
 		int eatTicks;
 		int eatSlot = -1;
+		/** 近づけなかった敵は一定時間無視する（entity → 無視を解く tickCount） */
+		final Map<LivingEntity, Integer> ignored = new WeakHashMap<>();
+		int unreachTicks;
+		LivingEntity lastEngaged;
 		int repath;
 		final Motion.FallGuard fall = new Motion.FallGuard();
 	}
@@ -127,7 +131,8 @@ final class Combat {
 	// ---- 脅威の選択 ----
 
 	private static LivingEntity scan(FakeMember o, ServerLevel l, State st) {
-		if (o.tickCount % 4 != 0 && st.target != null && st.target.isAlive() && o.distanceToSqr(st.target) < 14 * 14) {
+		if (o.tickCount % 4 != 0 && st.target != null && st.target.isAlive() && o.distanceToSqr(st.target) < 14 * 14
+				&& !isIgnored(o, st, st.target)) {
 			return st.target;
 		}
 		AABB box = o.getBoundingBox().inflate(16, 8, 16);
@@ -136,7 +141,11 @@ final class Combat {
 		double bd = Double.MAX_VALUE;
 		for (LivingEntity e : list) {
 			double d = e.distanceToSqr(o);
-			boolean melee = d < 7 * 7;
+			if (isIgnored(o, st, e)) {
+				continue;
+			}
+			// 近接は「7ブロック以内で、見えている（または手が届く距離）」ときだけ。壁の向こう・洞窟の敵で戦闘が終わらなくなるのを防ぐ
+			boolean melee = d < 7 * 7 && (d < 2.5 * 2.5 || o.hasLineOfSight(e));
 			boolean ranged = isRanged(e) && d < 20 * 20 && o.hasLineOfSight(e);
 			if (!melee && !ranged) {
 				continue;
@@ -152,12 +161,32 @@ final class Combat {
 		return best;
 	}
 
+	private static boolean isIgnored(FakeMember o, State st, LivingEntity e) {
+		Integer until = st.ignored.get(e);
+		if (until == null) {
+			return false;
+		}
+		if (o.tickCount >= until) {
+			st.ignored.remove(e);
+			return false;
+		}
+		return true;
+	}
+
 	static boolean isThreat(FakeMember o, LivingEntity e) {
 		if (e == o || !e.isAlive() || e instanceof Player || e instanceof FakeMember || e instanceof EnderDragon) {
 			return false;
 		}
 		LivingEntity hurtBy = o.getLastHurtByMob();
 		boolean attackedMe = hurtBy == e && o.tickCount - o.getLastHurtByMobTimestamp() < 100;
+		if (e instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin
+				&& !(e instanceof net.minecraft.world.entity.monster.piglin.PiglinBrute)) {
+			// ピグリン・ゾンビ化ピグリン以外の AbstractPiglin は Enemy だが中立扱い。こちらを狙っている／殴られた時だけ反撃。取引中は殴らない
+			if (o.skills().status().startsWith("ピグリンと取引")) {
+				return false;
+			}
+			return attackedMe || (e instanceof net.minecraft.world.entity.Mob pm && pm.getTarget() == o);
+		}
 		if (e instanceof NeutralMob nm) {
 			// エンダーマン・ゾンビピグリン等は怒っている（自分を狙っている）ときだけ
 			return attackedMe || (nm.isAngry() && e instanceof net.minecraft.world.entity.Mob m && m.getTarget() == o);
@@ -208,10 +237,23 @@ final class Combat {
 			return;
 		}
 		if (dist > REACH + 0.2) {
+			if (st.lastEngaged != t) {
+				st.lastEngaged = t;
+				st.unreachTicks = 0;
+			}
+			// 3秒近づけない敵は10秒無視（届かない敵で進行が止まらないように）
+			if (++st.unreachTicks > 60 && !isRanged(t)) {
+				st.ignored.put(t, o.tickCount + 200);
+				st.unreachTicks = 0;
+				st.target = null;
+				st.calm = 41;
+				return;
+			}
 			setShield(o, st, wantShield);
 			approach(o, st, t, dist);
 			return;
 		}
+		st.unreachTicks = 0;
 		// 間合いの中: 横によけつつ、ジャンプ攻撃
 		if (--st.strafeTicks <= 0) {
 			st.strafeTicks = 12 + o.getRandom().nextInt(14);

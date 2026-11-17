@@ -19,10 +19,11 @@ import net.minecraft.world.phys.Vec3;
 /**
  * 見ていない所の早送り。
  * 開始: 自動進行オンで、同じ次元の64ブロック内にプレイヤー（スペクテイターも「見ている」扱い）が20秒いない。
- * 終了: 誰かが64ブロック内に入った瞬間（その段階の進み具合に応じた分だけ物を足して、本当に動く状態に戻る）。
+ * 終了: 誰かが追跡距離（160ブロック）内に入った瞬間（その段階の進み具合に応じた分だけ物を足して、本当に動く状態に戻る）。
  * 進め方: 段階ごとの標準時間（Stage.ffSeconds、合計約12分）だけ待ったら、その段階で手に入るはずの物を持ち物に足し、
  * 次の場所（ネザー・ネザー要塞・要塞のエンドポータル・エンド）へテレポート／次元移動する。
  * 早送り中は無敵（見ていない所で事故死しない）。スキルは止める。
+ * 飛び先の160ブロック内に人がいたら飛ばない: 早送りをやめ、その段階は本当に歩く（walkOnly）。
  */
 final class FastForward {
 	private final FakeMember o;
@@ -30,6 +31,8 @@ final class FastForward {
 	private boolean active;
 	private int ticks;
 	private Stage ticksStage;
+	/** 飛び先に人がいたので本当に歩く段階（この段階のあいだは早送りしない） */
+	private Stage walkOnly;
 
 	FastForward(FakeMember o, Autopilot ap) {
 		this.o = o;
@@ -40,13 +43,32 @@ final class FastForward {
 		return active;
 	}
 
+	boolean walkOnly(Stage s) {
+		return walkOnly == s;
+	}
+
+	/** 飛び先 at が誰かに見られていたら、飛ばずに早送りをやめてこの段階を本当に歩く。止めたら true。 */
+	private boolean blocked(Stage s, ServerLevel to, BlockPos at) {
+		if (to == null || at == null || !Autopilot.watchedAt(to, Vec3.atCenterOf(at))) {
+			return false;
+		}
+		walkOnly = s;
+		ticks = 0;
+		stop(false);
+		Autopilot.LOGGER.info("[run] {} 飛び先に人がいるので早送りせず歩く: {}", o.getDisplayNameText(), s.label);
+		return true;
+	}
+
 	String progressText() {
 		int total = Math.max(1, ap.stage().ffSeconds * 20);
 		return ticks * 100 / total + "%";
 	}
 
 	void start() {
-		if (ap.stage() == Stage.DONE) {
+		if (walkOnly != null && walkOnly != ap.stage()) {
+			walkOnly = null;
+		}
+		if (ap.stage() == Stage.DONE || walkOnly == ap.stage()) {
 			return;
 		}
 		active = true;
@@ -90,6 +112,9 @@ final class FastForward {
 			ticksStage = s;
 			ticks = 0;
 		}
+		if (walkOnly != null && walkOnly != s) {
+			walkOnly = null;
+		}
 		ticks++;
 		if (ticks < s.ffSeconds * 20) {
 			return;
@@ -100,7 +125,6 @@ final class FastForward {
 
 	/** 段階を終わらせる: 物を足す → 場所を移す → postEvent → 次の段階。テレポートしたらこの個体は消える。 */
 	private void complete(Stage s) {
-		grant(s, 1.0);
 		Ctx c = new Ctx(o, ap);
 		ServerLevel l = c.l;
 		Stage next = s.next();
@@ -108,6 +132,11 @@ final class FastForward {
 			case PORTAL -> {
 				BlockPos portal = c.mark(RunSkills.MARK_PORTAL_OW);
 				if (!c.nether()) {
+					ServerLevel neth = l.getServer().getLevel(Level.NETHER);
+					if (blocked(s, neth, BlockPos.containing(o.getX() / 8, 70, o.getZ() / 8))) {
+						return;
+					}
+					grant(s, 1.0);
 					if (portal == null || !l.hasChunkAt(portal) || !l.getBlockState(portal).is(Blocks.NETHER_PORTAL)) {
 						portal = RunSkills.instantNetherPortal(o);
 						o.postEvent("ゲート作った 座標 " + portal.getX() + " " + portal.getY() + " " + portal.getZ());
@@ -129,6 +158,10 @@ final class FastForward {
 					f = RunSkills.findFortress(nether, from);
 				}
 				if (f != null) {
+					if (blocked(s, nether, f)) {
+						return;
+					}
+					grant(s, 1.0);
 					o.skills().setMark(RunSkills.MARK_FORTRESS, f);
 					finishStage(s, c, next);
 					jump(nether, new BlockPos(f.getX(), 64, f.getZ()));
@@ -143,6 +176,10 @@ final class FastForward {
 					sh = RunSkills.findStronghold(ow, from);
 				}
 				if (sh != null) {
+					if (blocked(s, ow, sh)) {
+						return;
+					}
+					grant(s, 1.0);
 					o.skills().setMark(RunSkills.MARK_STRONGHOLD, sh);
 					RunSkills.PortalRoom room = RunSkills.portalRoom(ow, sh);
 					BlockPos dest;
@@ -162,8 +199,12 @@ final class FastForward {
 				if (c.overworld() && sh != null) {
 					RunSkills.PortalRoom room = RunSkills.portalRoom(l, sh);
 					if (room != null) {
+						if (blocked(s, l.getServer().getLevel(Level.END), new BlockPos(100, 49, 0))) {
+							return;
+						}
 						long missing = room.frames().stream()
-								.filter(p -> !l.getBlockState(p).getValue(net.minecraft.world.level.block.EndPortalFrameBlock.HAS_EYE)).count();
+								.filter(p -> l.getBlockState(p).is(Blocks.END_PORTAL_FRAME)
+										&& !l.getBlockState(p).getValue(net.minecraft.world.level.block.EndPortalFrameBlock.HAS_EYE)).count();
 						ensure(Items.ENDER_EYE, (int) missing);
 						RunSkills.fillFramesInstant(o, room.frames());
 						BlockPos center = room.center();
@@ -178,6 +219,11 @@ final class FastForward {
 			}
 			case DRAGON -> {
 				ServerLevel end = l.getServer().getLevel(Level.END);
+				if (end != null && !c.end()) {
+					// エンドにいないのに倒した扱いにしない。エンドへ行く段階に戻す
+					ap.setStage(Stage.FILL_PORTAL, "エンドにいない");
+					return;
+				}
 				if (end != null) {
 					for (EnderDragon d : end.getDragons()) {
 						d.kill(end);
@@ -189,6 +235,10 @@ final class FastForward {
 			default -> {
 			}
 		}
+		if (s == Stage.DRAGON && !ap.dragonKilled()) {
+			return;
+		}
+		grant(s, 1.0);
 		finishStage(s, c, next);
 	}
 
@@ -329,11 +379,13 @@ final class FastForward {
 		t.putBoolean("FF", active);
 		t.putInt("FFTicks", ticks);
 		t.putString("FFStage", ticksStage == null ? "" : ticksStage.id);
+		t.putString("FFWalkOnly", walkOnly == null ? "" : walkOnly.id);
 	}
 
 	void load(CompoundTag t) {
 		active = t.getBooleanOr("FF", false);
 		ticks = t.getIntOr("FFTicks", 0);
 		ticksStage = Stage.byId(t.getStringOr("FFStage", ""));
+		walkOnly = Stage.byId(t.getStringOr("FFWalkOnly", ""));
 	}
 }

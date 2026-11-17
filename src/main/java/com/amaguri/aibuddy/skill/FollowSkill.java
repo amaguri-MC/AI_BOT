@@ -7,7 +7,7 @@ import net.minecraft.world.phys.Vec3;
 
 /** プレイヤーについていく。stop するまで続く。 */
 final class FollowSkill extends Skill {
-	private final String name;
+	private String name;
 	private ServerPlayer target;
 	private int lostTicks;
 	private int failures;
@@ -19,6 +19,14 @@ final class FollowSkill extends Skill {
 
 	@Override
 	String begin() {
+		if (name == null || name.isBlank()) {
+			// 名前の省略は「一番近い人」（スペクテイターは除く）
+			ServerPlayer near = SkillUtil.nearestPlayer(o, 256);
+			if (near == null) {
+				return "できない: 近くにプレイヤーがいない";
+			}
+			name = near.getScoreboardName();
+		}
 		target = SkillUtil.findPlayer(o, name);
 		if (target == null) {
 			return "できない: " + name + " が見つからない（同じ世界にいない）";

@@ -152,6 +152,11 @@ final class Nav {
 
 	// ---- NORMAL ----
 
+	/**
+	 * 遠い目標は32ブロック先の区間に区切る。高さは地表に吸着するのを基本にし（山・谷でも足場がある所）、
+	 * そこへ到達できない（上空の足場・屋根の上・洞窟など地表が使えない）ときだけ目標への線形補間にする。
+	 * 到達判定の createPath は重いので、区間を出し直すときだけ呼ぶ（毎tickは呼ばない）。
+	 */
 	private Vec3 segmentTarget() {
 		Vec3 pos = o.position();
 		double dx = goal.x - pos.x;
@@ -159,11 +164,24 @@ final class Nav {
 		double h = Math.sqrt(dx * dx + dz * dz);
 		if (h > 36) {
 			double k = 32.0 / h;
-			// 高さは目標へ線形補間（地表の高さマップに吸着させない: 上空の足場・洞窟・ネザーで到達不能な高さになるため）。
-			// 実際の足場はパスファインダが近い到達可能ノードへ寄せる。
-			return new Vec3(pos.x + dx * k, pos.y + (goal.y - pos.y) * k, pos.z + dz * k);
+			double x = pos.x + dx * k;
+			double z = pos.z + dz * k;
+			Vec3 snapped = SkillUtil.snap(o, x, z, pos.y);
+			if (reachable(snapped)) {
+				return snapped;
+			}
+			Vec3 lerp = new Vec3(x, pos.y + (goal.y - pos.y) * k, z);
+			if (reachable(lerp)) {
+				return lerp;
+			}
+			return snapped; // どちらも部分経路になるなら従来どおり（詰まれば rescue が掘る）
 		}
 		return goal;
+	}
+
+	private boolean reachable(Vec3 t) {
+		Path p = o.getNavigation().createPath(BlockPos.containing(t.x, t.y, t.z), 1);
+		return p != null && p.canReach();
 	}
 
 	private void tickNormal() {
@@ -172,13 +190,12 @@ final class Nav {
 		sinceRepath++;
 		boolean dash = sprint || distance() >= DASH_DISTANCE;
 		double mod = Motion.speedMod(o, dash, speed);
-		Vec3 seg = segmentTarget();
-		boolean moved = pathTarget == null || pathTarget.distanceToSqr(seg) > 16.0;
 		// 経路が終わっている（区間の継ぎ目・開始直後・失敗）なら同じtickで次を出す（2tickの暴走ガードだけ）。
 		// 「1秒に1回まで」は進んでいる最中の再計算（目標の移動・100tick経過）にだけ適用する。
 		boolean ended = nav.isDone() || pathTarget == null;
-		boolean wantNew = ended ? sinceRepath >= 2 : (moved || sinceRepath >= 100) && sinceRepath >= REPATH_MIN_TICKS;
+		boolean wantNew = ended ? sinceRepath >= (pathFailed ? REPATH_MIN_TICKS : 2) : sinceRepath >= 100; // 失敗が続くときだけ1秒に1回
 		if (wantNew) {
+			Vec3 seg = segmentTarget();
 			boolean ok = nav.moveTo(seg.x, seg.y, seg.z, mod);
 			pathFailed = !ok;
 			pathTarget = seg;
