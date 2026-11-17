@@ -34,6 +34,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 	private static final float LAYERS_MELT_LIMIT = 0.25f;
 
 	private int dbg;
+	private int dbgScale;
 	private int dbgSubmit;
 	private final PlayerModel wideModel;
 	private final PlayerModel slimModel;
@@ -99,6 +100,10 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 
 	@Override
 	protected void scale(AvatarRenderState state, PoseStack poseStack) {
+		if (dbgScale++ == 0) {
+			String st = StackWalker.getInstance().walk(f -> f.limit(10).map(x -> x.getClassName() + "." + x.getMethodName()).collect(java.util.stream.Collectors.joining(" <- ")));
+			AiBuddyMod.LOGGER.info("[melt] stack scale: {}", st);
+		}
 		poseStack.scale(0.9375f, 0.9375f, 0.9375f); // AvatarRenderer と同じ
 	}
 
