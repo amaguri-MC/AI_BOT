@@ -28,11 +28,21 @@ public class AiBuddyGameTests {
 	// 高さをずらすのは、横に並ぶ他テストの舞台と重ならないため。
 	private static final int FLOOR = 20;
 	private static final int STAND = FLOOR + 1;
+	/** 速度テスト専用の高さ（他テストの舞台と重ならない） */
+	private static final int SPEED_FLOOR = 60;
 	private static final int LEN = 48;
 	private static final int WID = 9;
 
 	/** 床は土、周りと天井はガラス、中は空気。 */
 	private static void buildArena(GameTestHelper h) {
+		buildArena(h, FLOOR);
+	}
+
+	/**
+	 * floor を変えると別の高さに舞台を作る。48ブロックの舞台は隣のテストの区画に食い込むため、
+	 * 並んで走る他テストの舞台（ガラスの壁）が走路を塞いでしまう。速度テストは専用の高さを使う。
+	 */
+	private static void buildArena(GameTestHelper h, int FLOOR) {
 		// 舞台は隣のチャンクまで伸びる。端のチャンクが entity ticking でないと mob が宙で凍るので、確実に読み込んでおく。
 		net.minecraft.core.BlockPos ca = h.absolutePos(new net.minecraft.core.BlockPos(0, FLOOR, 0));
 		net.minecraft.core.BlockPos cb = h.absolutePos(new net.minecraft.core.BlockPos(LEN - 1, FLOOR, WID - 1));
@@ -55,7 +65,11 @@ public class AiBuddyGameTests {
 	// ---- helpers ----
 
 	private static FakeMember summon(GameTestHelper h, float x, float z, boolean autopilot) {
-		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, x, (float) STAND, z);
+		return summon(h, x, z, autopilot, FLOOR);
+	}
+
+	private static FakeMember summon(GameTestHelper h, float x, float z, boolean autopilot, int floor) {
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, x, (float) (floor + 1), z);
 		if (!autopilot) {
 			// 指示なしで勝手に動く Autopilot を止め、スキルだけを試す。
 			// UNVERIFIED: FakeMember.autopilot() / Autopilot.setEnabled(boolean) は CONTRACT W3 の署名。まだ実装が無いかもしれない
@@ -197,9 +211,10 @@ public class AiBuddyGameTests {
 	public void sprintSpeedOnFlatGround(GameTestHelper h) {
 		final double startX = 2.5;
 		final double targetX = 42.5;
-		buildArena(h);
-		FakeMember m = summon(h, (float) startX, 4.5f, false);
-		Vec3 target = h.absoluteVec(new Vec3(targetX, STAND, 4.5));
+		final int floor = SPEED_FLOOR;
+		buildArena(h, floor);
+		FakeMember m = summon(h, (float) startX, 4.5f, false, floor);
+		Vec3 target = h.absoluteVec(new Vec3(targetX, floor + 1, 4.5));
 		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
 		var st = new Object() {
