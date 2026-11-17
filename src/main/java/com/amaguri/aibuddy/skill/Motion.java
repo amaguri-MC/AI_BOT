@@ -222,7 +222,7 @@ final class Motion {
 				double[] c = CALIB.computeIfAbsent(o, k -> new double[] { 1.0 });
 				double f = Math.pow(target / bps, 0.35);
 				f = Math.max(0.92, Math.min(1.08, f));
-				c[0] = Math.max(0.5, Math.min(2.0, c[0] * f));
+				c[0] = Math.max(0.85, Math.min(1.12, c[0] * f)); // 見た目が「加速」にならないよう補正幅は小さく
 			}
 			winStart = now;
 			winTicks = 0;

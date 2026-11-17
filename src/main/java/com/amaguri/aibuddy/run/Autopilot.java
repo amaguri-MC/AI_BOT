@@ -569,9 +569,15 @@ public final class Autopilot {
 
 	/** その次元のその場所が、誰かの追跡距離内か（早送りの飛び先の確認にも使う）。 */
 	static boolean watchedAt(ServerLevel sl, net.minecraft.world.phys.Vec3 at) {
-		double r = watchRange();
+		// クリエで飛んで遠くから見ている人もいるので、同じ次元の水平512ブロック以内に誰か（ゲームモード問わず）いれば「見ている」
+		double r = Math.max(512.0, watchRange());
 		for (ServerPlayer p : sl.getServer().getPlayerList().getPlayers()) {
-			if (p.level() == sl && p.position().distanceToSqr(at) <= r * r) {
+			if (p.level() != sl) {
+				continue;
+			}
+			double dx = p.getX() - at.x;
+			double dz = p.getZ() - at.z;
+			if (dx * dx + dz * dz <= r * r) {
 				return true;
 			}
 		}
