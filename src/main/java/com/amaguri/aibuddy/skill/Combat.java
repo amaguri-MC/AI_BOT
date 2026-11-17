@@ -106,6 +106,9 @@ final class Combat {
 		boolean day = !Observer.isNight(l);
 		// 周囲の敵を整理: こちらを狙っている敵（aggr）と、そうでない敵
 		List<LivingEntity> aggr = aggressors(o, l, st);
+		if (o.tickCount % 8 == 0 && !aggr.isEmpty()) {
+			System.out.println("[combatdbg] aggr=" + aggr.size() + " evade=" + st.evade.active + " mode=" + st.evade.mode + " fighting=" + st.fighting + " noFlee=" + (st.noFleeUntil - o.tickCount) + " cd=" + st.cooldown + " target=" + st.target + " hp=" + o.getHealth());
+		}
 		if (st.evade.active) {
 			if (!st.evade.tick(o, aggr, day)) {
 				// どの終わり方でも20秒は再避難しない（避難→再開→また避難の往復を防ぐ）。待ち切ったら30秒
