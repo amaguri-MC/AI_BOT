@@ -543,6 +543,11 @@ public class AiBuddyGameTests {
 	 * 上は開けてある（屋根なし）。両端と横はガラスの壁。
 	 */
 	private static void buildCanal(GameTestHelper h, int floor, int len, int waterFrom, int waterTo, int depth) {
+		buildCanal(h, floor, len, waterFrom, waterTo, depth, 0);
+	}
+
+	/** endLift > 0 なら、水の向こう側（x > waterTo）の陸を endLift ブロック高い崖にする。 */
+	private static void buildCanal(GameTestHelper h, int floor, int len, int waterFrom, int waterTo, int depth, int endLift) {
 		forceChunks(h, floor, len);
 		for (int x = 0; x < len; x++) {
 			for (int z = 0; z < WID; z++) {
@@ -554,6 +559,8 @@ public class AiBuddyGameTests {
 					boolean wallX = x == 0 || x == len - 1;
 					if (wallZ || wallX) {
 						b = Blocks.GLASS;
+					} else if (endLift > 0 && x > waterTo && y <= floor + endLift) {
+						b = Blocks.DIRT;
 					} else if (y < bottom) {
 						b = Blocks.AIR;
 					} else if (y == bottom && !water) {
@@ -624,6 +631,115 @@ public class AiBuddyGameTests {
 				h.succeed();
 			} else if (t >= 850) {
 				h.assertTrue(false, "ボートで渡れない rode=" + st.rode + " rel=" + p + " status=" + m.skills().status());
+			}
+		});
+	}
+
+	// ---- (8) 崖の岸に着いても漂い続けない（上限内で降りて泳ぎに切り替え、ボートを回収する） ----
+
+	private static final int CLIFF_FLOOR = 220;
+	private static final int SHALLOW_FLOOR = 260;
+	private static final int EXIT_FLOOR = 300;
+
+	@GameTest(maxTicks = 900)
+	public void doesNotDriftForeverAtCliffShore(GameTestHelper h) {
+		final int floor = CLIFF_FLOOR;
+		buildCanal(h, floor, 48, 4, 36, 3, 4); // 向こう岸は4段の崖
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.OAK_PLANKS, 5));
+		Vec3 target = h.absoluteVec(new Vec3(42.5, floor + 5, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			boolean rode;
+			long rodeAt = -1;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (m.isPassenger()) {
+				st.rode = true;
+				if (st.rodeAt < 0) {
+					st.rodeAt = t;
+				}
+			}
+			if (t % 20 == 0) {
+				System.out.println("[clifftest] t=" + t + " rel=" + rel(h, m) + " passenger=" + m.isPassenger() + " inWater=" + m.isInWater()
+						+ " status=" + m.skills().status());
+			}
+			var boats = h.getLevel().getEntitiesOfClass(net.minecraft.world.entity.vehicle.boat.AbstractBoat.class,
+					m.getBoundingBox().inflate(60, 30, 60));
+			if (st.rode && !m.isPassenger() && boats.isEmpty() && m.getInventory().countItem(Items.OAK_BOAT) >= 1) {
+				h.assertTrue(t - st.rodeAt < 700, "降りるまでに時間がかかりすぎ " + (t - st.rodeAt));
+				h.succeed();
+			} else if (t >= 800) {
+				h.assertTrue(false, "崖の岸で漂い続けている rode=" + st.rode + " boats=" + boats.size() + " rel=" + rel(h, m));
+			}
+		});
+	}
+
+	// ---- (9) 水から上がると立ち姿勢に戻る ----
+
+	@GameTest(maxTicks = 500)
+	public void returnsToStandingAfterLeavingWater(GameTestHelper h) {
+		final int floor = EXIT_FLOOR;
+		buildCanal(h, floor, 20, 1, 8, 4); // 水は x=1..8、その先は陸
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, 4.5f, (float) (floor - 2), 4.5f);
+		m.autopilot().setEnabled(false);
+		Vec3 target = h.absoluteVec(new Vec3(14.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			boolean sawSwim;
+			int landed;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (m.getPose() == net.minecraft.world.entity.Pose.SWIMMING) {
+				st.sawSwim = true;
+			}
+			if (t % 20 == 0) {
+				System.out.println("[exittest] t=" + t + " rel=" + rel(h, m) + " pose=" + m.getPose() + " swimming=" + m.isSwimming()
+						+ " inWater=" + m.isInWater() + " status=" + m.skills().status());
+			}
+			boolean onLand = !m.isInWater() && m.onGround() && rel(h, m).x > 10.0;
+			if (st.sawSwim && onLand) {
+				st.landed++;
+				if (st.landed >= 10) {
+					h.assertTrue(m.getPose() == net.minecraft.world.entity.Pose.STANDING && !m.isSwimming(),
+							"陸に上がっても泳ぎ姿勢のまま pose=" + m.getPose() + " swimming=" + m.isSwimming());
+					h.succeed();
+				}
+			} else if (t >= 450) {
+				h.assertTrue(false, "陸に上がれない sawSwim=" + st.sawSwim + " rel=" + rel(h, m));
+			}
+		});
+	}
+
+	// ---- (10) 深さ1の浅瀬では泳がない（歩いて渡る） ----
+
+	@GameTest(maxTicks = 400)
+	public void doesNotSwimInOneBlockDeepWater(GameTestHelper h) {
+		final int floor = SHALLOW_FLOOR;
+		buildCanal(h, floor, 22, 4, 14, 1); // 深さ1の水たまりが x=4..14
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		Vec3 target = h.absoluteVec(new Vec3(19.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			boolean wasInWater;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (m.isInWater()) {
+				st.wasInWater = true;
+			}
+			h.assertTrue(m.getPose() != net.minecraft.world.entity.Pose.SWIMMING && !m.isSwimming(),
+					"浅瀬で泳ぎ姿勢になった rel=" + rel(h, m) + " pose=" + m.getPose());
+			if (rel(h, m).x > 17.0) {
+				h.assertTrue(st.wasInWater, "浅瀬を通っていない（テストの前提）");
+				h.succeed();
+			} else if (t >= 350) {
+				h.assertTrue(false, "浅瀬を渡れない rel=" + rel(h, m) + " status=" + m.skills().status());
 			}
 		});
 	}

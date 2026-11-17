@@ -352,6 +352,11 @@ public class FakeMember extends PathfinderMob {
 			return;
 		}
 		ensureProfile();
+		// 水に触れていないのに泳ぎ姿勢が残っていたら戻す（陸で寝そべったまま歩かない）
+		if ((isSwimming() || getPose() == net.minecraft.world.entity.Pose.SWIMMING) && !isInWater()) {
+			setSwimming(false);
+			setPose(net.minecraft.world.entity.Pose.STANDING);
+		}
 		// /tp などで大きく飛んだら、古い目標への経路を捨てて Nav に引き直させる
 		net.minecraft.world.phys.Vec3 now = position();
 		if (lastTickPos != null && now.distanceToSqr(lastTickPos) > TELEPORT_JUMP * TELEPORT_JUMP) {

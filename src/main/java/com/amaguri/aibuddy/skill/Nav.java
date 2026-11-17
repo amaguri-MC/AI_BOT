@@ -120,6 +120,7 @@ final class Nav {
 		digger.cancel();
 		o.getNavigation().stop();
 		o.setSprinting(false);
+		Motion.endSwim(o);
 		dasher.reset();
 	}
 
@@ -166,9 +167,12 @@ final class Nav {
 		if (arrived()) {
 			o.getNavigation().stop();
 			o.setSprinting(false);
+			if (!Motion.shouldSwim(o)) {
+				Motion.endSwim(o);
+			}
 			return;
 		}
-		if (o.isInWater() || o.isInLava()) {
+		if (Motion.shouldSwim(o) || o.isInLava()) {
 			o.getJumpControl().jump(); // 泳いで上がる
 		}
 		// /tp などで位置が大きく飛んだら、掘る・柱・橋の途中状態を捨てて経路を引き直す
@@ -439,7 +443,7 @@ final class Nav {
 				return;
 			}
 		}
-		if (o.isInWater() && !o.isPassenger()) {
+		if (Motion.shouldSwim(o) && !o.isPassenger()) {
 			swimTowards();
 		} else {
 			Motion.endSwim(o);

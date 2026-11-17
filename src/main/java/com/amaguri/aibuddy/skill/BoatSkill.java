@@ -72,6 +72,11 @@ final class BoatSkill extends Skill {
 		private float yaw;
 		private Vec3 lastPos;
 		private int slow;
+		private int sailTicks;
+		private int sailLimit;
+		private double bestDist = Double.MAX_VALUE;
+		private int stallTicks;
+		private boolean triedAlt;
 		boolean ok = true;
 
 		Ride(FakeMember o, Vec3 goal, Vec3 shore, BlockPos water0) {
@@ -128,6 +133,10 @@ final class BoatSkill extends Skill {
 					} else if (o.startRiding(boat, true, false) || o.getVehicle() == boat) {
 						yaw = boat.getYRot();
 						lastPos = boat.position();
+						Motion.endSwim(o);
+						// 上限: 目標までの距離に比例（速度の半分で進む想定）＋余裕10秒
+						double d0 = SkillUtil.horiz(boat.position(), goal);
+						sailLimit = (int) (d0 / (SPEED * 0.5)) + 200;
 						s = S.SAIL;
 					} else if (t > 60) {
 						fail();
@@ -191,6 +200,26 @@ final class BoatSkill extends Skill {
 				land(l, null);
 				return;
 			}
+			// 時間上限・「5秒進まない」: 岸沿いに別の上陸点を探し、無ければ降りて泳ぐ
+			sailTicks++;
+			if (dist < bestDist - 1.0) {
+				bestDist = dist;
+				stallTicks = 0;
+			} else {
+				stallTicks++;
+			}
+			if (stallTicks >= 100 && !triedAlt) {
+				triedAlt = true;
+				Vec3 alt = standAround(l, bp);
+				if (alt != null) {
+					land(l, alt);
+					return;
+				}
+			}
+			if (sailTicks > sailLimit || stallTicks >= 200) {
+				bail(); // 崖で上陸できない等。ボートを回収して泳ぐ（Nav 側が1200tick は再びボートを使わない）
+				return;
+			}
 			float want = (float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f;
 			// 前方の水の有無で進路を選ぶ（まっすぐ → 左右へ振る）
 			float[] offs = { 0, 25, -25, 50, -50, 80, -80, 120, -120 };
@@ -238,7 +267,16 @@ final class BoatSkill extends Skill {
 				lastPos = bp;
 			}
 			if (slow >= 2) {
-				boat.setPos(bp.x + dir.x * sp, bp.y, bp.z + dir.z * sp);
+				// 前方が水（固体でも空気でもない）のときだけ押す。壁の中へ押し込んで窒息させない
+				double nx = bp.x + dir.x * sp;
+				double nz = bp.z + dir.z * sp;
+				BlockPos front = BlockPos.containing(nx, bp.y + 0.3, nz);
+				BlockPos frontHead = front.above();
+				boolean wet = l.getFluidState(BlockPos.containing(nx, bp.y, nz)).is(net.minecraft.tags.FluidTags.WATER)
+						|| l.getFluidState(BlockPos.containing(nx, bp.y - 0.5, nz)).is(net.minecraft.tags.FluidTags.WATER);
+				if (wet && !l.getBlockState(front).blocksMotion() && !l.getBlockState(frontHead).blocksMotion()) {
+					boat.setPos(nx, bp.y, nz);
+				}
 			}
 		}
 
@@ -279,8 +317,32 @@ final class BoatSkill extends Skill {
 			return null;
 		}
 
+		/** 岸沿い（半径 7 の円周）で立てる所を探す。 */
+		private Vec3 standAround(ServerLevel l, Vec3 bp) {
+			for (double r = 3.0; r <= 7.0; r += 2.0) {
+				for (int deg = 0; deg < 360; deg += 30) {
+					double a = Math.toRadians(deg);
+					Vec3 st = standAt(l, bp.x + Math.cos(a) * r, bp.z + Math.sin(a) * r, bp.y);
+					if (st != null && SkillUtil.horiz(st, goal) < SkillUtil.horiz(bp, goal) + 8) {
+						return st;
+					}
+				}
+			}
+			return null;
+		}
+
+		/** 降りて泳ぎに切り替える。 */
+		private void bail() {
+			ok = false;
+			o.stopRiding();
+			Motion.endSwim(o);
+			recover();
+			s = S.DONE;
+		}
+
 		private void land(ServerLevel l, Vec3 stand) {
 			o.stopRiding();
+			Motion.endSwim(o);
 			if (stand != null) {
 				o.setPos(stand.x, stand.y, stand.z);
 				o.setDeltaMovement(Vec3.ZERO);

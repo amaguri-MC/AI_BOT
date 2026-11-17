@@ -298,6 +298,27 @@ final class Motion {
 		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
 	}
 
+	/** 水深（足元の水柱の連続する水ブロック数）。 */
+	static int waterDepth(ServerLevel l, FakeMember o) {
+		BlockPos p = o.blockPosition();
+		int n = 0;
+		for (BlockPos q = p; n < 6 && l.getFluidState(q).is(net.minecraft.tags.FluidTags.WATER); q = q.above()) {
+			n++;
+		}
+		for (BlockPos q = p.below(); n < 12 && l.getFluidState(q).is(net.minecraft.tags.FluidTags.WATER); q = q.below()) {
+			n++;
+		}
+		return n;
+	}
+
+	/** プレイヤーと同じ: 頭まで水に潜っているか、水深2以上のときだけ泳ぐ（浅瀬は歩く）。 */
+	static boolean shouldSwim(FakeMember o) {
+		if (!o.isInWater()) {
+			return false;
+		}
+		return o.isUnderWater() || waterDepth(SkillUtil.level(o), o) >= 2;
+	}
+
 	/** 泳ぎ姿勢を戻す（水から上がったとき）。 */
 	static void endSwim(FakeMember o) {
 		if (o.isSwimming()) {
