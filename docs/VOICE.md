@@ -12,11 +12,9 @@ Whisper が動くのは、マイクを使う人（サーバーを動かす人）
 
 ## 準備（Windows）
 1. Minecraft に Simple Voice Chat を入れる（サーバー側。参加する人も入れる）。
-2. whisper.cpp をダウンロードする。GitHub の whisper.cpp の Releases で Windows 版の zip を選ぶ。NVIDIA のグラフィックボードがあるなら「cublas」「cuda」と書いてある zip、無ければふつうの `whisper-bin-x64.zip`。zip を好きなフォルダに解凍する。
-3. モデルをダウンロードする。Hugging Face の `ggerganov/whisper.cpp` から次のどちらかを、解凍したフォルダの中の `models` フォルダ（無ければ作る）に入れる。
-   - GPU あり: `ggml-large-v3-turbo.bin`
-   - GPU なし: `ggml-small.bin`（その場合は bat の `MODEL=` を small に書き換える）
-4. このリポジトリの `tools/whisper/start-whisper.bat` を、手順2で解凍したフォルダ（`whisper-server.exe` がある所）にコピーして、ダブルクリックする。
+2. `tools/whisper/` の `whisper-start.bat` と `setup-and-start.ps1` を同じフォルダに置いて、`whisper-start.bat` をダブルクリックする。
+3. 1回目は whisper.cpp と日本語モデルを自動でダウンロードする（GPU ありは約1.6GB、なしは約0.5GB。数分かかる）。入る場所は `ユーザーフォルダ\aibuddy-whisper`。2回目からはすぐ起動する。
+4. 「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」。
 5. 黒い画面に `listening` のような表示が出ればOK。この画面は開いたままにする。
 6. Minecraft を起動して、AIボットのそばでマイクに向かって話す。ログに `[voice] 名前: 文字` が出れば成功。
 
