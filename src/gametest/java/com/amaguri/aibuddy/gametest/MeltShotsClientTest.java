@@ -31,7 +31,6 @@ public class MeltShotsClientTest implements FabricClientGameTest {
 	@Override
 	public void runTest(ClientGameTestContext context) {
 		context.runOnClient(c -> {
-			c.options.hideGui = true;
 			c.options.renderDistance().set(6);
 		});
 		try (TestSingleplayerContext sp = context.worldBuilder().create()) {
