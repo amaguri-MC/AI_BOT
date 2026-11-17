@@ -96,6 +96,13 @@ final class Recipes {
 			}
 		}
 		add(Items.STICK, 4, false, of(ItemTags.PLANKS, 2, "板材"));
+		// ボート: 板材5。本物は3x3だが、川辺で作れるよう作業台なしにする
+		for (Identifier id : BuiltInRegistries.ITEM.keySet()) {
+			String p = id.getPath();
+			if ((p.endsWith("_boat") && !p.endsWith("chest_boat")) || p.equals("bamboo_raft")) {
+				add(BuiltInRegistries.ITEM.getValue(id), 1, false, of(ItemTags.PLANKS, 5, "板材"));
+			}
+		}
 		add(Items.CRAFTING_TABLE, 1, false, of(ItemTags.PLANKS, 4, "板材"));
 		add(Items.CHEST, 1, true, of(ItemTags.PLANKS, 8, "板材"));
 		add(Items.TORCH, 4, false, of(ItemTags.COALS, 1, "石炭"), of(Items.STICK, 1));
@@ -190,7 +197,7 @@ final class Recipes {
 			"板材", "oak_planks", "木の板", "oak_planks", "板", "oak_planks", "planks", "oak_planks", "棒", "stick", "木の棒", "stick",
 			"作業台", "crafting_table", "かまど", "furnace", "竈", "furnace", "チェスト", "chest", "松明", "torch", "バケツ", "bucket",
 			"火打石と打ち金", "flint_and_steel", "火打ち石と打ち金", "flint_and_steel", "打ち金", "flint_and_steel",
-			"盾", "shield", "ブレイズパウダー", "blaze_powder", "エンダーアイ", "ender_eye", "パン", "bread", "弓", "bow", "矢", "arrow",
+			"盾", "shield", "ボート", "oak_boat", "舟", "oak_boat", "いかだ", "bamboo_raft", "ブレイズパウダー", "blaze_powder", "エンダーアイ", "ender_eye", "パン", "bread", "弓", "bow", "矢", "arrow",
 			"ベッド", "white_bed", "bed", "white_bed", "pickaxe", "iron_pickaxe",
 			"鉄", "iron_ingot", "iron", "iron_ingot", "鉄インゴット", "iron_ingot", "金インゴット", "gold_ingot", "金", "gold_ingot", "gold", "gold_ingot",
 			"銅", "copper_ingot", "copper", "copper_ingot", "ガラス", "glass", "glass", "glass", "石炭", "coal", "木炭", "charcoal",

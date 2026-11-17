@@ -231,6 +231,101 @@ final class Motion {
 		}
 	}
 
+	// ---- 泳ぎ ----
+
+	/** 泳ぎの速さ（ブロック/秒）。プレイヤーのダッシュ泳ぎ（約2.2〜2.9）相当。 */
+	static final double SWIM_BPS = 2.6;
+
+	/** 足元の水柱の水面の高さ。水の中でなければ NaN。 */
+	static double waterSurfaceY(ServerLevel l, FakeMember o) {
+		BlockPos p = o.blockPosition();
+		if (!l.getFluidState(p).is(net.minecraft.tags.FluidTags.WATER)) {
+			p = p.below();
+			if (!l.getFluidState(p).is(net.minecraft.tags.FluidTags.WATER)) {
+				return Double.NaN;
+			}
+		}
+		for (int i = 0; i < 40 && l.getFluidState(p.above()).is(net.minecraft.tags.FluidTags.WATER); i++) {
+			p = p.above();
+		}
+		return p.getY() + l.getFluidState(p).getHeight(l, p);
+	}
+
+	/**
+	 * 水の中を target（水平位置）へ泳ぐ。底を歩かず、泳ぎ姿勢（Pose.SWIMMING）で進む。
+	 * diveY が NaN なら水面を泳ぐ（頭を出して）。数値なら その深さまで潜る（息が減ったら水面へ戻る）。
+	 * mob の水中加速は flyingSpeed 0.02 * zza で遅すぎるので、速度を毎tick自前で与える。
+	 * UNVERIFIED: Entity.updateSwimming が「ダッシュ中・水中なら isSwimming を保つ」前提。setSwimming(true) を毎tick立てて補う。
+	 */
+	static void swimStep(FakeMember o, Vec3 target, double diveY) {
+		ServerLevel l = SkillUtil.level(o);
+		o.setSprinting(true);
+		if (!o.isSwimming()) {
+			o.setSwimming(true);
+		}
+		// UNVERIFIED: mob では Entity.updatePose が Pose.SWIMMING にしてくれなかった（CI で pose=STANDING のまま）ので自分で立てる
+		if (o.getPose() != net.minecraft.world.entity.Pose.SWIMMING) {
+			o.setPose(net.minecraft.world.entity.Pose.SWIMMING);
+		}
+		double surface = waterSurfaceY(l, o);
+		if (Double.isNaN(surface)) {
+			surface = o.getY() + 1.0;
+		}
+		boolean breath = o.getAirSupply() < 90;
+		boolean dive = !Double.isNaN(diveY) && !breath && diveY < surface - 1.5;
+		double desiredFeet = dive ? diveY : surface + 0.05 - o.getEyeHeight();
+		double vy = Mth.clamp((desiredFeet - o.getY()) * 0.35, dive ? -0.15 : -0.12, 0.12);
+		Vec3 cur = o.getDeltaMovement();
+		double dx = target.x - o.getX();
+		double dz = target.z - o.getZ();
+		double len = Math.sqrt(dx * dx + dz * dz);
+		double sp = SWIM_BPS / 20.0;
+		double vx = 0;
+		double vz = 0;
+		if (len > 0.05) {
+			double k = Math.min(sp, len) / len;
+			vx = dx * k;
+			vz = dz * k;
+			float yaw = Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f);
+			o.setYRot(yaw);
+			o.setYHeadRot(yaw);
+			o.setYBodyRot(yaw);
+		}
+		// 岸にぶつかったら（目標が自分より下でなければ）這い上がる
+		if (o.horizontalCollision && target.y > o.getY() - 0.5 && !dive) {
+			vy = 0.36;
+		}
+		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
+	}
+
+	/** 泳ぎ姿勢を戻す（水から上がったとき）。 */
+	static void endSwim(FakeMember o) {
+		if (o.isSwimming()) {
+			o.setSwimming(false);
+		}
+		if (o.getPose() == net.minecraft.world.entity.Pose.SWIMMING) {
+			o.setPose(net.minecraft.world.entity.Pose.STANDING);
+		}
+	}
+
+	/** 参照高さ付近の (x,z) の水柱が「深さ2以上の水面」か。屋根（上空のブロック）は見ない。 */
+	static boolean waterColumn(ServerLevel l, double x, double z, double refY) {
+		int bx = Mth.floor(x);
+		int bz = Mth.floor(z);
+		if (!l.hasChunkAt(new BlockPos(bx, (int) refY, bz))) {
+			return false;
+		}
+		int top = Mth.floor(refY) + 3;
+		for (int y = top; y > Mth.floor(refY) - 14 && y > l.getMinY(); y--) {
+			BlockState st = l.getBlockState(new BlockPos(bx, y, bz));
+			if (st.isAir()) {
+				continue;
+			}
+			return st.is(Blocks.WATER) && l.getBlockState(new BlockPos(bx, y - 1, bz)).is(Blocks.WATER);
+		}
+		return false;
+	}
+
 	// ---- 溶岩ブレーキ ----
 
 	static boolean isDeadly(BlockState s) {

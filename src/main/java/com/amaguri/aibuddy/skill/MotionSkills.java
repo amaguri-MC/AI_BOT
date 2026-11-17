@@ -29,6 +29,7 @@ public final class MotionSkills {
 			case "bridge" -> new BridgeSkill(o, r, str(in, "direction"), in.has("length") ? (int) num(in, "length") : 5);
 			case "pillar" -> new PillarSkill(o, r, in.has("height") ? (int) num(in, "height") : 4);
 			case "barter" -> new BarterSkill(o, r, in.has("gold") ? (int) num(in, "gold") : 8);
+			case "boat" -> new BoatSkill(o, r, num(in, "x"), num(in, "y"), num(in, "z"));
 			case "fight_dragon" -> new DragonSkill(o, r);
 			default -> null;
 		};
@@ -46,6 +47,8 @@ public final class MotionSkills {
 				props(str("direction", "north|south|east|west（省略で向いている方向）"), integer("length", "マス数（既定5）"))));
 		out.add(tool("pillar", "真上に足場を積んで登る。ブロックが要る。", props(integer("height", "高さ（既定4）"))));
 		out.add(tool("barter", "金インゴットをピグリンに投げて取引し、落ちた物を拾う。", props(integer("gold", "投げる個数（既定8）"))));
+		out.add(tool("boat", "ボートを作って（板材5）水を渡り、目標の座標へ行く。作れなければ泳ぐ。陸に着いたらボートは回収する。",
+				props(num("x", "X座標"), num("y", "Y座標"), num("z", "Z座標")), "x", "y", "z"));
 		out.add(tool("fight_dragon", "エンドでエンドラと戦う。クリスタルを壊し、止まり木の竜を殴り、ブレスをよける。倒したら知らせる。", props()));
 	}
 

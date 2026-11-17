@@ -53,6 +53,13 @@ final class Nav {
 	private Vec3 pathTarget;
 	private int directTicks;
 
+	// 水を渡る: 長い水面はボート、作れなければ泳ぐ
+	static final int BOAT_MIN_WATER = 24;
+	private int boatMinLength = BOAT_MIN_WATER;
+	private BoatSkill.Ride ride;
+	private int rideCooldown;
+	private int scanTimer = 20;
+
 	// DIG
 	private final List<BlockPos> digQueue = new ArrayList<>();
 	private Vec3 stepTarget;
@@ -91,11 +98,20 @@ final class Nav {
 		go(g, reach, 1.0);
 	}
 
+	/** この長さ（ブロック）以上の水面が続くならボートで渡る。既定24。 */
+	void setBoatMinLength(int n) {
+		this.boatMinLength = n;
+	}
+
 	void setVertTol(double v) {
 		this.vertTol = v;
 	}
 
 	void stop() {
+		if (ride != null) {
+			ride.abort();
+			ride = null;
+		}
 		goal = null;
 		failed = false;
 		rescues = 0;
@@ -133,6 +149,18 @@ final class Nav {
 
 	void tick() {
 		if (goal == null || failed) {
+			return;
+		}
+		if (ride != null) {
+			ride.tick();
+			if (ride.finished()) {
+				if (!ride.ok) {
+					rideCooldown = 1200; // 渡れなかった: しばらくは泳ぐ
+				}
+				ride = null;
+				pathTarget = null;
+				sinceRepath = REPATH_MIN_TICKS;
+			}
 			return;
 		}
 		if (arrived()) {
@@ -195,6 +223,80 @@ final class Nav {
 	private boolean reachable(Vec3 t) {
 		Path p = o.getNavigation().createPath(BlockPos.containing(t.x, t.y, t.z), 1);
 		return p != null && p.canReach();
+	}
+
+	// ---- 泳ぐ / ボート ----
+
+	private void swimTowards() {
+		Vec3 target;
+		Path p = o.getNavigation().getPath();
+		if (p != null && !p.isDone() && p.getNextNodeIndex() < p.getNodeCount()) {
+			Vec3 n = Vec3.atBottomCenterOf(p.getNextNodePos());
+			target = SkillUtil.horiz(n, o.position()) < 8 ? n : segmentTarget0();
+		} else {
+			target = segmentTarget0();
+		}
+		double surface = Motion.waterSurfaceY(SkillUtil.level(o), o);
+		// 目標が水中深く（沈没船など）で近いときだけ潜る。それ以外は水面を泳ぐ
+		double dive = !Double.isNaN(surface) && goal.y < surface - 2.0 && SkillUtil.horiz(o.position(), goal) < 14 ? goal.y : Double.NaN;
+		Motion.swimStep(o, target, dive);
+	}
+
+	/** 目標方向に長い水面が続くなら、ボートで渡る Ride を始める。始めたら true。 */
+	private boolean startRideIfLongWater() {
+		ServerLevel l = SkillUtil.level(o);
+		Vec3 pos = o.position();
+		double dx = goal.x - pos.x;
+		double dz = goal.z - pos.z;
+		double hd = Math.sqrt(dx * dx + dz * dz);
+		if (hd < boatMinLength) {
+			return false;
+		}
+		double ux = dx / hd;
+		double uz = dz / hd;
+		double limit = Math.min(hd, 96);
+		double start = -1;
+		double end = -1;
+		for (double t = 2; t <= limit; t += 2) {
+			boolean w = Motion.waterColumn(l, pos.x + ux * t, pos.z + uz * t, pos.y);
+			if (start < 0) {
+				if (w) {
+					start = t;
+				} else if (t > 56) {
+					return false; // 水はまだ遠い
+				}
+			} else if (!w) {
+				end = t;
+				break;
+			}
+		}
+		if (start < 0) {
+			return false;
+		}
+		if (end < 0) {
+			end = limit + 2;
+		}
+		if (end - start < boatMinLength) {
+			return false;
+		}
+		if (BoatSkill.Ride.canPrepare(o) != null) {
+			rideCooldown = 1200; // 材料が無ければ泳ぐ
+			return false;
+		}
+		BlockPos water0 = BlockPos.containing(pos.x + ux * start, pos.y, pos.z + uz * start);
+		// 水面の高さの y を探す
+		for (int y = (int) Math.floor(pos.y) + 3; y > pos.y - 14; y--) {
+			BlockPos c = new BlockPos(water0.getX(), y, water0.getZ());
+			if (l.getBlockState(c).is(net.minecraft.world.level.block.Blocks.WATER)) {
+				water0 = c;
+				break;
+			}
+		}
+		double sd = Math.max(0, start - 2.5);
+		Vec3 shore = new Vec3(pos.x + ux * sd, pos.y, pos.z + uz * sd);
+		ride = new BoatSkill.Ride(o, goal, shore, water0);
+		o.getNavigation().stop();
+		return true;
 	}
 
 	/** 目標への直線上の点（狭い範囲）。直進の最終手段で使う。 */
@@ -328,7 +430,21 @@ final class Nav {
 			sinceRepath = 0;
 		}
 		nav.setSpeedModifier(mod);
-		dasher.tick(dash);
+		if (rideCooldown > 0) {
+			rideCooldown--;
+		}
+		if (++scanTimer >= 20 && ride == null && rideCooldown == 0 && distance() > boatMinLength + 2) {
+			scanTimer = 0;
+			if (startRideIfLongWater()) {
+				return;
+			}
+		}
+		if (o.isInWater() && !o.isPassenger()) {
+			swimTowards();
+		} else {
+			Motion.endSwim(o);
+			dasher.tick(dash);
+		}
 		if (o.tickCount % 3 == 0 && Motion.lavaBrake(o)) {
 			noProgress++;
 			sinceRepath = REPATH_MIN_TICKS;
