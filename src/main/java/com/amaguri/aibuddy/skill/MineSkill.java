@@ -60,7 +60,28 @@ final class MineSkill extends Skill {
 	private int lootTicks;
 	private BlockPos lastMined;
 	private int ticks;
-	private final Set<Long> blacklist = new HashSet<>();
+	/** 届かなかった鉱石 → 解除される ticks（60秒）。 */
+	private final Map<Long, Integer> blacklist = new HashMap<>();
+	/** 今の目標を選んでから、掘り始められないまま経過した tick（10秒で諦める）。 */
+	private int reachTicks;
+	private boolean extraOre;
+	private int reachLimit = 200;
+
+	private void ban(BlockPos p) {
+		blacklist.put(p.asLong(), ticks + 20 * 60);
+	}
+
+	private boolean banned(BlockPos p) {
+		Integer until = blacklist.get(p.asLong());
+		if (until == null) {
+			return false;
+		}
+		if (until <= ticks) {
+			blacklist.remove(p.asLong());
+			return false;
+		}
+		return true;
+	}
 
 	MineSkill(FakeMember o, SkillRunner r, String query, int count) {
 		super(o, r);
@@ -183,6 +204,9 @@ final class MineSkill extends Skill {
 		if (p != null) {
 			target = p;
 			obstacles = 0;
+			reachTicks = 0;
+			// 10秒＋遠い分の歩く時間
+			reachLimit = 200 + (int) (o.position().distanceTo(Vec3.atCenterOf(p)) * 12);
 			state = State.GOTO;
 			return;
 		}
@@ -225,7 +249,7 @@ final class MineSkill extends Skill {
 				for (int dy = -16; dy <= 16; dy++) {
 					BlockPos p = c.offset(dx, dy, dz);
 					BlockState s = l.getBlockState(p);
-					if (!blocks.contains(s.getBlock()) || blacklist.contains(p.asLong())) {
+					if (!blocks.contains(s.getBlock()) || banned(p)) {
 						continue;
 					}
 					if (!harvestable(s)) {
@@ -273,10 +297,17 @@ final class MineSkill extends Skill {
 			state = State.DIG;
 			return;
 		}
+		// 目標は掘り終わるか諦めるまで固定。10秒たっても掘れる距離に入れなければ60秒ブラックリスト
+		if (++reachTicks > reachLimit) {
+			ban(target);
+			nav.stop();
+			state = State.FIND;
+			return;
+		}
 		nav.go(c, 0.9, 1.1);
 		nav.tick();
 		if (nav.failed()) {
-			blacklist.add(target.asLong());
+			ban(target);
 			nav.stop();
 			state = State.FIND;
 		}
@@ -294,6 +325,11 @@ final class MineSkill extends Skill {
 			Vec3 eye = o.getEyePosition();
 			Vec3 c = Vec3.atCenterOf(target);
 			if (eye.distanceTo(c) > 5.2) {
+				if (++reachTicks > reachLimit) {
+					ban(target);
+					state = State.FIND;
+					return;
+				}
 				state = State.GOTO;
 				return;
 			}
@@ -302,32 +338,42 @@ final class MineSkill extends Skill {
 			digIsTarget = first.equals(target) || blocks.contains(l.getBlockState(first).getBlock());
 			if (digIsTarget && !harvestable(l.getBlockState(first))) {
 				// 道具が壊れた等で、もう適正に掘れない
-				blacklist.add(target.asLong());
+				ban(target);
 				state = State.FIND;
 				return;
 			}
 			if (digIsTarget) {
-				target = first;
+				// 別の鉱石が手前にあっても目標は入れ替えない（掘った分は数える）
+				if (!first.equals(target)) {
+					digIsTarget = false;
+					extraOre = true;
+				}
 			} else if (++obstacles > 30 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
-				blacklist.add(target.asLong());
+				ban(target);
 				state = State.FIND;
 				return;
 			}
 			if (!digger.begin(first)) {
-				blacklist.add(target.asLong());
+				ban(target);
 				state = State.FIND;
 				return;
 			}
 		}
 		int r = digger.tick();
 		if (r == Digger.BROKEN) {
-			if (digIsTarget) {
+			if (digIsTarget || extraOre) {
 				mined++;
+				extraOre = false;
 				lastMined = target;
 				lootTicks = 0;
 				state = State.LOOT;
 			}
 		} else if (r == Digger.ABORTED) {
+			if (++reachTicks > reachLimit) {
+				ban(target);
+				state = State.FIND;
+				return;
+			}
 			state = State.GOTO;
 		}
 	}
