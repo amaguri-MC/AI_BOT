@@ -200,6 +200,10 @@ public class AiBuddyGameTests {
 		};
 		h.onEachTick(() -> {
 			double x = rel(h, m).x;
+			if (h.getTick() % 20 == 0) {
+				System.out.println("[speedtest] t=" + h.getTick() + " rel=" + rel(h, m) + " sprint=" + m.isSprinting()
+						+ " onGround=" + m.onGround() + " navDone=" + m.getNavigation().isDone() + " status=" + m.skills().status());
+			}
 			// 加速と到着の減速を除いて、x=8 → x=40 の32ブロックを測る
 			if (st.t0 < 0 && x >= 8.0) {
 				st.t0 = h.getTick();
