@@ -1,0 +1,11 @@
+{
+  "apiKey": "",
+  "model": "claude-haiku-5-5",
+  "thinkIntervalSec": 8,
+  "maxTokens": 400,
+  "minGapSec": 3,
+  "requestTimeoutSec": 30,
+  "chatRadius": 64,
+  "historyTurns": 12,
+  "backoffSec": 30
+}

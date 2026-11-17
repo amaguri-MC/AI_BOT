@@ -1,0 +1,14 @@
+{
+  "item.aibuddy.tako_ashi": "タコ足",
+  "item.aibuddy.takoyaki": "たこ焼き",
+  "entity.aibuddy.fake_member": "ニセメンバー",
+  "commands.aibuddy.spawn.unknown_persona": "ペルソナが見つからない: %s",
+  "commands.aibuddy.spawn.failed": "スポーンできなかった",
+  "commands.aibuddy.spawn.success": "%sをスポーンした",
+  "commands.aibuddy.remove.none": "該当するメンバーがいない: %s",
+  "commands.aibuddy.remove.success": "%s人を削除した",
+  "commands.aibuddy.melt.success": "溶けを%sにした（%s人）",
+  "commands.aibuddy.freeze.on": "溶けを止めた",
+  "commands.aibuddy.freeze.off": "溶けを再開した",
+  "commands.aibuddy.reload.success": "設定を再読込した"
+}

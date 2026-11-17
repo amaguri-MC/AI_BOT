@@ -1,0 +1,33 @@
+{
+	"schemaVersion": 1,
+	"id": "aibuddy",
+	"version": "${version}",
+	"name": "AI Buddy",
+	"description": "AIボットと一緒に遊ぶMOD。タコ足とたこ焼きを追加します。",
+	"authors": [
+		"amaguri"
+	],
+	"license": "CC0-1.0",
+	"environment": "*",
+	"entrypoints": {
+		"client": ["com.amaguri.aibuddy.client.AiBuddyClient"],
+		"main": [
+			"com.amaguri.aibuddy.AiBuddyMod"
+		],
+		"voicechat": [
+			"com.amaguri.aibuddy.voice.AiBuddyVoicechatPlugin"
+		]
+	},
+	"mixins": [
+		"aibuddy.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"voicechat": "*"
+	}
+}
