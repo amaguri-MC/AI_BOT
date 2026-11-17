@@ -46,6 +46,16 @@ final class AutoReporter {
 	private final Counter pearls = new Counter();
 	private final Counter eyes = new Counter();
 
+	/** 次元移動で作り直されたとき、報告済みの記録を引き継ぐ。 */
+	void inheritFrom(AutoReporter prev) {
+		reportedStructures.addAll(prev.reportedStructures);
+		rods.last = prev.rods.last;
+		pearls.last = prev.pearls.last;
+		eyes.last = prev.eyes.last;
+		nightArmed = prev.nightArmed;
+		lowHealthArmed = prev.lowHealthArmed;
+	}
+
 	AutoReporter(FakeMember o) {
 		this.o = o;
 	}

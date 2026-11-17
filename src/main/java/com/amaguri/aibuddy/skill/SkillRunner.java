@@ -143,6 +143,11 @@ public final class SkillRunner {
 		}
 	}
 
+	/** 次元移動で作り直されたとき、前の個体の報告済み記録を引き継ぐ。 */
+	public synchronized void inheritFrom(SkillRunner prev) {
+		reporter.inheritFrom(prev.reporter);
+	}
+
 	public synchronized void stop() {
 		stopCurrentQuietly();
 		lastResult = "止めた";

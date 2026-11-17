@@ -204,6 +204,7 @@ public class FakeMember extends PathfinderMob {
 		super.restoreFrom(old);
 		if (old instanceof FakeMember prev) {
 			events.addAll(prev.drainEvents());
+			skills().inheritFrom(prev.skills());
 			if (this.level() instanceof net.minecraft.server.level.ServerLevel sl && !prev.level().dimension().equals(sl.dimension())) {
 				postEvent(com.amaguri.aibuddy.skill.Observer.dimText(sl) + "に移動した");
 			}
