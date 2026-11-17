@@ -140,7 +140,7 @@ final class Motion {
 				airDash = false;
 			} else if (o.onGround()) {
 				airDash = false;
-				if (jumpCd <= 0 && straightFlat()) {
+				if (jumpCd <= 0 && straightFlat() && safeToJump(o)) {
 					o.getJumpControl().jump();
 					jumpCd = JUMP_INTERVAL;
 					airDash = true;
@@ -431,6 +431,31 @@ final class Motion {
 	}
 
 	// ---- 溶岩ブレーキ ----
+
+	/** 跳んでも安全か: 進む向き（速度か体の向き）の 1〜2.5 ブロック先に、落差2以内の床があり溶岩・火でない。 */
+	static boolean safeToJump(FakeMember o) {
+		ServerLevel l = SkillUtil.level(o);
+		Vec3 v = o.getDeltaMovement();
+		Vec3 d = v.horizontalDistanceSqr() > 1.0E-4 ? new Vec3(v.x, 0, v.z).normalize() : dirOfYaw(o.getYRot());
+		for (double k : new double[] { 1.0, 1.8, 2.5 }) {
+			BlockPos c = BlockPos.containing(o.getX() + d.x * k, o.getY(), o.getZ() + d.z * k);
+			boolean floor = false;
+			for (int dd = 1; dd <= 2; dd++) {
+				BlockState st = l.getBlockState(c.below(dd));
+				if (isDeadly(st)) {
+					return false;
+				}
+				if (st.blocksMotion()) {
+					floor = true;
+					break;
+				}
+			}
+			if (!floor || isDeadly(l.getBlockState(c))) {
+				return false;
+			}
+		}
+		return true;
+	}
 
 	static boolean isDeadly(BlockState s) {
 		return s.is(Blocks.LAVA) || s.is(Blocks.FIRE) || s.is(Blocks.SOUL_FIRE) || s.is(Blocks.MAGMA_BLOCK)

@@ -307,6 +307,10 @@ final class Combat {
 		if (e == o || !e.isAlive() || e instanceof Player || e instanceof FakeMember || e instanceof EnderDragon) {
 			return false;
 		}
+		// 溶岩の中・足場より大きく下にいる敵は近接では届かず、追うと落ちるだけなので相手にしない
+		if (e.isInLava() || (e.getY() < o.getY() - 2.5 && !isRanged(e))) {
+			return false;
+		}
 		LivingEntity hurtBy = o.getLastHurtByMob();
 		boolean attackedMe = hurtBy == e && o.tickCount - o.getLastHurtByMobTimestamp() < 100;
 		if (e instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin
@@ -399,14 +403,14 @@ final class Combat {
 					st.backTicks = 8;
 				}
 			} else if (o.onGround()) {
-				o.getJumpControl().jump();
+				{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
 			}
 			moveRel(o, 0.3f, st.strafeDir * 0.8f, true);
 		} else {
 			setShield(o, st, wantShield);
 			moveRel(o, dist < 2.0 ? -0.6f : 0.2f, st.strafeDir * 0.9f, true);
 			if (st.cooldown < 6 && o.onGround() && dist < 3.2) {
-				o.getJumpControl().jump();
+				{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
 			}
 		}
 	}
@@ -434,7 +438,7 @@ final class Combat {
 				}
 				o.getMoveControl().setWantedPosition(tp.x, tp.y, tp.z, mod);
 				if (o.onGround() && t.getY() > o.getY() + 0.6) {
-					o.getJumpControl().jump();
+					{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
 				}
 			}
 		} else {
@@ -577,7 +581,7 @@ final class Combat {
 			o.setSprinting(true);
 			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 			if (o.onGround() && o.tickCount % 12 == 0) {
-				o.getJumpControl().jump();
+				{ if (Motion.safeToJump(o)) o.getJumpControl().jump(); }
 			}
 			return;
 		}
