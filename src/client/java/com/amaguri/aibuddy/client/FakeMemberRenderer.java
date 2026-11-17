@@ -33,6 +33,8 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 	/** 溶けがこれ以上なら手持ちアイテムは描かない（腕の位置が変形後の体とずれるため）。 */
 	private static final float LAYERS_MELT_LIMIT = 0.25f;
 
+	/** EntityRenderDispatcherMixin が参照する。 */
+	public static FakeMemberRenderer INSTANCE;
 	private final PlayerModel wideModel;
 	private final PlayerModel slimModel;
 
@@ -41,6 +43,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		this.wideModel = this.model;
 		this.slimModel = new PlayerModel(ctx.bakeLayer(ModelLayers.PLAYER_SLIM), true);
 		this.addLayer(new PlayerItemInHandLayer<>(this));
+		INSTANCE = this;
 	}
 
 	@Override
@@ -158,10 +161,8 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 					float iz = z * 0.82f;
 					float px = prevX * 0.82f;
 					float pz = prevZ * 0.82f;
-					// 中央は胴の平均色(暗め)、縁(外側18%)は少し明るく。裏表どちらからも見えるよう逆巻きも足す（カリング対策）
-					quad(consumer, pose, 0, 0, px, pz, ix, iz, ix, iz, argb, light, 1f);
+					// 中央は胴の平均色(暗め)、縁(外側18%)は少し明るく。上向きの1枚だけ出す（両面を重ねると同じ高さで Z ファイトして縞になる。26.2 の entityTranslucent は裏面を消さないので1枚でよい）
 					quad(consumer, pose, 0, 0, ix, iz, px, pz, px, pz, argb, light, 1f);
-					quad(consumer, pose, px, pz, prevX, prevZ, x, z, ix, iz, rim, light, 1f);
 					quad(consumer, pose, ix, iz, x, z, prevX, prevZ, px, pz, rim, light, 1f);
 				}
 				prevX = x;

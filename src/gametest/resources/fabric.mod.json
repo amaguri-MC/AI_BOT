@@ -11,6 +11,9 @@
 		"fabric-api": "*"
 	},
 	"entrypoints": {
+		"fabric-client-gametest": [
+			"com.amaguri.aibuddy.gametest.MeltShotsClientTest"
+		],
 		"fabric-gametest": [
 			"com.amaguri.aibuddy.gametest.AiBuddyGameTests"
 		]
