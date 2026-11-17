@@ -61,7 +61,7 @@ public class FakeMemberRenderer extends LivingEntityRenderer<FakeMember, AvatarR
 		super.extractRenderState(entity, state, partialTick);
 		HumanoidMobRenderer.extractHumanoidRenderState(entity, state, partialTick, this.itemModelResolver);
 
-		PlayerSkin skin = SkinColors.skinOf(entity.getSkinName());
+		PlayerSkin skin = SkinColors.skinOf(entity);
 		state.skin = skin;
 		state.id = entity.getId();
 		state.showHat = true;

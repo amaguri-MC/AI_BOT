@@ -55,7 +55,7 @@ public class MeltShotsClientTest implements FabricClientGameTest {
 				FakeMember.setMeltFrozen(true);
 				FakeMember m = ModEntities.FAKE_MEMBER.create(level, EntitySpawnReason.COMMAND);
 				m.snapTo(p.getX() + 0.5, p.getY(), p.getZ() + 0.5, 0f, 0f);
-				m.setSkinName("Steve");
+				m.setSkinName("MHF_Steve");
 				m.setDisplayNameText("Melt");
 				m.setNoAi(true);
 				level.addFreshEntity(m);
@@ -66,6 +66,26 @@ public class MeltShotsClientTest implements FabricClientGameTest {
 					origin[0], origin[1], origin[2] + 4));
 			context.waitTicks(40);
 			sp.getConnection().waitForChunksRender();
+
+			// スキンが解決されて既定スキンと変わるまで最大 ~30 秒待つ（CI からセッションサーバーに届かなければ変わらない）
+			String skinInfo = "";
+			for (int i = 0; i < 30; i++) {
+				skinInfo = context.computeOnClient(c -> {
+					for (Entity e : c.level.entitiesForRendering()) {
+						if (e instanceof FakeMember f) {
+							var id = com.amaguri.aibuddy.client.SkinColors.skinOf(f).body().texturePath();
+							boolean def = id.equals(net.minecraft.client.resources.DefaultPlayerSkin.getDefaultSkin().body().texturePath());
+							return "skin=" + id + " default=" + def + " profile=" + f.getProfile().name();
+						}
+					}
+					return "no member";
+				});
+				if (skinInfo.contains("default=false")) {
+					break;
+				}
+				context.waitTicks(20);
+			}
+			LOGGER.info("[skincheck] {}", skinInfo);
 
 			StringBuilder bad = new StringBuilder();
 			for (float m : STEPS) {

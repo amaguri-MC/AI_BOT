@@ -13,6 +13,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleContainer;
@@ -48,6 +49,9 @@ public class FakeMember extends PathfinderMob {
 			SynchedEntityData.defineId(FakeMember.class, EntityDataSerializers.FLOAT);
 	private static final EntityDataAccessor<String> DATA_SKIN =
 			SynchedEntityData.defineId(FakeMember.class, EntityDataSerializers.STRING);
+	/** スキンの ResolvableProfile（サーバーが名前から解決して textures 付きにし、クライアントへ同期する。Mannequin と同じ方式）。 */
+	private static final EntityDataAccessor<ResolvableProfile> DATA_PROFILE =
+			SynchedEntityData.defineId(FakeMember.class, EntityDataSerializers.RESOLVABLE_PROFILE);
 	private static final EntityDataAccessor<String> DATA_DISPLAY_NAME =
 			SynchedEntityData.defineId(FakeMember.class, EntityDataSerializers.STRING);
 
@@ -172,6 +176,7 @@ public class FakeMember extends PathfinderMob {
 		super.defineSynchedData(builder);
 		builder.define(DATA_MELT, 0f);
 		builder.define(DATA_SKIN, "");
+		builder.define(DATA_PROFILE, ResolvableProfile.Static.EMPTY);
 		builder.define(DATA_DISPLAY_NAME, "");
 	}
 
@@ -206,7 +211,42 @@ public class FakeMember extends PathfinderMob {
 	}
 
 	public void setSkinName(String skin) {
-		this.entityData.set(DATA_SKIN, skin == null ? "" : skin);
+		String n = skin == null ? "" : skin;
+		if (!n.equals(getSkinName())) {
+			skinResolveState = 0;
+		}
+		this.entityData.set(DATA_SKIN, n);
+	}
+
+	/** 同期済みのスキンプロフィール。未設定なら EMPTY（クライアントは既定スキンにする）。 */
+	public ResolvableProfile getProfile() {
+		return this.entityData.get(DATA_PROFILE);
+	}
+
+	/** 0=未着手 1=解決中 2=完了/失敗（名前を変えたら 0 に戻る） */
+	private int skinResolveState;
+
+	/** サーバー側: スキン名からプロフィール（textures 付き）を非同期で解決して同期する。失敗時はログ1回で、名前だけのプロフィールのまま（クライアント側解決に任せる）。 */
+	private void ensureProfile() {
+		String name = getSkinName();
+		if (skinResolveState != 0 || name.isBlank() || !(level() instanceof ServerLevel sl)) {
+			return;
+		}
+		skinResolveState = 1;
+		ResolvableProfile unresolved = ResolvableProfile.createUnresolved(name);
+		this.entityData.set(DATA_PROFILE, unresolved);
+		net.minecraft.server.MinecraftServer server = sl.getServer();
+		unresolved.resolveProfile(server.services().profileResolver()).whenComplete((profile, err) -> server.execute(() -> {
+			if (isRemoved() || !name.equals(getSkinName())) {
+				return;
+			}
+			skinResolveState = 2;
+			if (err != null || profile == null) {
+				AiBuddyMod.LOGGER.warn("スキンのプロフィールを解決できなかった（既定スキンになる可能性）: {} {}", name, err == null ? "" : err.toString());
+				return;
+			}
+			this.entityData.set(DATA_PROFILE, ResolvableProfile.createResolved(profile));
+		}));
 	}
 
 	public String getDisplayNameText() {
@@ -311,6 +351,7 @@ public class FakeMember extends PathfinderMob {
 		if (level().isClientSide()) {
 			return;
 		}
+		ensureProfile();
 		// /tp などで大きく飛んだら、古い目標への経路を捨てて Nav に引き直させる
 		net.minecraft.world.phys.Vec3 now = position();
 		if (lastTickPos != null && now.distanceToSqr(lastTickPos) > TELEPORT_JUMP * TELEPORT_JUMP) {
