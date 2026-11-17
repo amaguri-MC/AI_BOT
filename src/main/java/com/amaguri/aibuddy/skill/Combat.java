@@ -114,6 +114,15 @@ final class Combat {
 			}
 			return;
 		}
+		// 敵がいる時に危険な縁（溶岩・奈落・2段超の落差）の1マス以内に立っていたら、まず内側へ1歩下がる（押されて落ちない）
+		if (!aggr.isEmpty() && o.onGround()) {
+			Vec3 in = Motion.awayFromDeadlyEdge(o);
+			if (in != null) {
+				o.getMoveControl().setWantedPosition(in.x, o.getY(), in.z, Motion.speedMod(o, false, 1.0));
+				o.setSprinting(false);
+				return;
+			}
+		}
 		if (o.tickCount >= st.noFleeUntil && shouldFlee(o, l, aggr, purposeful, day)) {
 			st.fighting = false;
 			lowerShield(o, st);

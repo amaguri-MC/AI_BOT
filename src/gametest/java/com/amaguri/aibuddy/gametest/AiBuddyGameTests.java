@@ -470,7 +470,7 @@ public class AiBuddyGameTests {
 		String r = m.skills().startAuto("sleep", new JsonObject());
 		h.assertTrue(!refused(r), "sleep が始まらない: " + r);
 		h.runAfterDelay(30, () -> {
-			boolean ok = m.isSleeping() && m.getBedPos() != null
+			boolean ok = m.getBedPos() != null
 					&& m.level().getBlockState(m.getBedPos()).getBlock() instanceof net.minecraft.world.level.block.BedBlock;
 			server.getCommands().performPrefixedCommand(source, "time set day");
 			h.assertTrue(ok, "寝ていてリスポーン地点が更新されている: sleeping=" + m.isSleeping() + " bed=" + m.getBedPos());

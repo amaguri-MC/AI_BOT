@@ -432,6 +432,38 @@ final class Motion {
 
 	// ---- 溶岩ブレーキ ----
 
+	/** 足元の四方のどこかが危険な縁なら、反対側（安全な床のある内側）の目標点を返す。縁でなければ null。 */
+	static Vec3 awayFromDeadlyEdge(FakeMember o) {
+		ServerLevel l = SkillUtil.level(o);
+		double sx = 0, sz = 0;
+		int bad = 0;
+		int[][] dirs = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+		for (int[] d : dirs) {
+			BlockPos c = BlockPos.containing(o.getX() + d[0] * 0.9, o.getY(), o.getZ() + d[1] * 0.9);
+			boolean floor = false;
+			boolean deadly = isDeadly(l.getBlockState(c));
+			for (int dd = 1; dd <= 2 && !deadly; dd++) {
+				BlockState st = l.getBlockState(c.below(dd));
+				if (isDeadly(st)) {
+					deadly = true;
+				} else if (st.blocksMotion()) {
+					floor = true;
+					break;
+				}
+			}
+			if (deadly || !floor) {
+				sx -= d[0];
+				sz -= d[1];
+				bad++;
+			}
+		}
+		if (bad == 0 || bad == 4 || (sx == 0 && sz == 0)) {
+			return null;
+		}
+		double n = Math.sqrt(sx * sx + sz * sz);
+		return new Vec3(o.getX() + sx / n * 1.2, o.getY(), o.getZ() + sz / n * 1.2);
+	}
+
 	/** 跳んでも安全か: 進む向き（速度か体の向き）の 1〜2.5 ブロック先に、落差2以内の床があり溶岩・火でない。 */
 	static boolean safeToJump(FakeMember o) {
 		ServerLevel l = SkillUtil.level(o);
