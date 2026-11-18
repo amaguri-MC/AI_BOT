@@ -227,8 +227,10 @@ final class Combat {
 			}
 		}
 		boolean armed = strongWeapon(o) && n == 1 && alone && o.getHealth() >= 10;
-		if (armed && !(swelling && c.getSwelling(1.0f) >= 0.2f && d < 6.0)) {
-			// 膨らむ前に近づいて倒す（膨らみ始めても、導火線が短くなるまでは殴り続ける）
+		// 上級者はクリーパーと無理に戦わない: 離れる先がある限りは離れる。追い詰められた時だけ（下の dir == null）武器で倒す
+		Vec3 away = Motion.safeAway(o, o.position().subtract(c.position()));
+		if (armed && away == null && d < 4.0) {
+			// 逃げ場が無い: 殴って押し返しながら倒す
 			st.backingOff = false;
 			st.engage = true;
 			st.fighting = true;
@@ -243,7 +245,7 @@ final class Combat {
 				st.backingOff = false;
 				return false;
 			}
-			Vec3 dir = Motion.safeAway(o, o.position().subtract(c.position()));
+			Vec3 dir = away;
 			if (dir == null) {
 				st.backingOff = false;
 				return false; // 下がる先が無い: 通常の判断へ

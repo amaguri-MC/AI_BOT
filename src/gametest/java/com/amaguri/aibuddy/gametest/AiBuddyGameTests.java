@@ -1291,36 +1291,4 @@ public class AiBuddyGameTests {
 		});
 	}
 
-	@GameTest(maxTicks = 500)
-	public void stoneSwordKillsCreeperBeforeItExplodes(GameTestHelper h) {
-		final int floor = CREEP3_FLOOR;
-		buildHall(h, floor, 50, 8);
-		FakeMember m = summon(h, 25.5f, 4.5f, false, floor);
-		m.getInventory().addItem(new ItemStack(Items.STONE_SWORD));
-		var c = h.spawn(net.minecraft.world.entity.EntityTypes.CREEPER, 16.5f, (float) (floor + 1), 4.5f);
-		var st = new Object() {
-			boolean exploded;
-		};
-		h.onEachTick(() -> {
-			long t = h.getTick();
-			if (c.isAlive()) {
-				c.setTarget(m);
-			}
-			if (t % 20 == 0) {
-				System.out.println("[creep3] t=" + t + " dist=" + m.distanceTo(c) + " hp=" + m.getHealth() + " creeperHp=" + c.getHealth());
-			}
-			h.assertTrue(m.getHealth() >= m.getMaxHealth() - 0.01 && m.isAlive(), "爆発を受けた hp=" + m.getHealth());
-			if (!c.isAlive()) {
-				h.succeed();
-			} else if (t >= 450) {
-				h.assertTrue(false, "クリーパーを倒せない creeperHp=" + c.getHealth() + " dist=" + m.distanceTo(c));
-			}
-		});
-	}
-
-	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
-		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
-		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
-		h.setBlock(headRel, bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
-	}
 }
