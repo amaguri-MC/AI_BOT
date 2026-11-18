@@ -89,7 +89,6 @@ final class MineSkill extends Skill {
 
 	MineSkill(FakeMember o, SkillRunner r, String query, int count) {
 		super(o, r);
-		nav.setAllowDig(true); // 鉱石・要塞へ掘り進むスキルは掘ってよい
 		this.query = query == null ? "" : query.trim();
 		this.goal = Math.max(1, Math.min(64, count));
 	}
@@ -354,7 +353,7 @@ final class MineSkill extends Skill {
 					digIsTarget = false;
 					extraOre = true;
 				}
-			} else if (++obstacles > 30 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
+			} else if (++obstacles > 1 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
 				ban(target);
 				state = State.FIND;
 				return;

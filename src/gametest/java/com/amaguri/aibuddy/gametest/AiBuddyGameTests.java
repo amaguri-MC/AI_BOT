@@ -215,19 +215,20 @@ public class AiBuddyGameTests {
 		});
 	}
 
-	/** 壁（石）の中に埋まった鉄鉱石2個を、2つの間を往復せずに掘り切れること。 */
+	/** 壁（石）に面した鉄鉱石2個（1つは石1個の裏）を、2つの間を往復せずに掘り切れること。 */
 	@GameTest(maxTicks = 1500)
 	public void mineTwoBuriedIronOresWithoutPingPong(GameTestHelper h) {
 		buildArena(h, MINE_FLOOR);
-		for (int x = 10; x <= 16; x++) {
+		// 掘り進まない: 鉱石は壁の面に出ていて、立って届く（1ブロックだけ覆われたものも1つ）
+		for (int x = 10; x <= 12; x++) {
 			for (int y = (MINE_FLOOR + 1); y <= (MINE_FLOOR + 1) + 3; y++) {
 				for (int z = 1; z <= 7; z++) {
 					h.setBlock(x, y, z, Blocks.STONE);
 				}
 			}
 		}
-		h.setBlock(12, (MINE_FLOOR + 1) + 1, 4, Blocks.IRON_ORE);
-		h.setBlock(14, (MINE_FLOOR + 1) + 1, 3, Blocks.IRON_ORE);
+		h.setBlock(10, (MINE_FLOOR + 1) + 1, 5, Blocks.IRON_ORE);
+		h.setBlock(11, (MINE_FLOOR + 1) + 1, 3, Blocks.IRON_ORE); // 手前の石1個を掘れば届く
 		FakeMember m = summon(h, 3.5f, 4.5f, false, MINE_FLOOR);
 		m.getInventory().addItem(new ItemStack(Items.STONE_PICKAXE));
 		String r = m.skills().start("mine", json("block", "iron", "count", 2));

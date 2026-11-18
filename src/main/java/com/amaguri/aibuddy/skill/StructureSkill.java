@@ -36,7 +36,6 @@ final class StructureSkill extends Skill {
 
 	StructureSkill(FakeMember o, SkillRunner r, String type, int radiusChunks) {
 		super(o, r);
-		nav.setAllowDig(true); // 鉱石・要塞へ掘り進むスキルは掘ってよい
 		this.type = type == null ? "" : type.toLowerCase().trim();
 		this.radius = Math.max(0, radiusChunks);
 	}
