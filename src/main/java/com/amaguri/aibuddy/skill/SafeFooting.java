@@ -85,6 +85,14 @@ public final class SafeFooting {
 		@Override
 		public void tick() {
 			FakeMember o = this.mob;
+			if (Motion.steered(o)) {
+				// 泳ぎ・水の中の歩きは Nav が速度と向きを直接決めている。元の MoveControl が経路点（遅れている・真上の点）へ
+				// 向きを回すと、2つの目標の間で向きが毎tick往復してその場で回る。ここでは何もしない
+				this.operation = MoveControl.Operation.WAIT;
+				o.setZza(0.0f);
+				o.setXxa(0.0f);
+				return;
+			}
 			// 目標点が真上・真下・すぐそば（水平0.4未満）だと、元の MoveControl は小さな dx,dz の atan2 で毎tick向きを振る
 			// （水中で次の経路点が真上の水面にある時など、その場でぐるぐる回る）。向きは変えず、前へも出さない
 			boolean nearVertical = this.operation == MoveControl.Operation.MOVE_TO

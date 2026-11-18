@@ -259,6 +259,7 @@ final class Motion {
 	 */
 	static void swimStep(FakeMember o, Vec3 target, double diveY) {
 		ServerLevel l = SkillUtil.level(o);
+		markSteered(o);
 		o.setSprinting(true);
 		if (!o.isSwimming()) {
 			o.setSwimming(true);
@@ -286,6 +287,8 @@ final class Motion {
 			double k = Math.min(sp, len) / len;
 			vx = dx * k;
 			vz = dz * k;
+		}
+		if (len > 0.4) { // 真上・すぐそばの点では向きを変えない（回らない）
 			float yaw = Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f);
 			o.setYRot(yaw);
 			o.setYHeadRot(yaw);
@@ -296,6 +299,51 @@ final class Motion {
 			vy = 0.36;
 		}
 		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
+	}
+
+	/** 浅い水・岸際を歩く速さ（ブロック/tick）。歩き（約4.3/秒）より少し遅い */
+	static final double WADE_SPEED = 0.16;
+
+	/**
+	 * 浅い水・岸際（泳ぐほど深くない）を target へ歩く。mob の水中の加速は遅く、FloatGoal で浮くと岸で止まるので、
+	 * 水平の速さを自前で与える。岸にぶつかったら跳び上がる。泳ぎ姿勢にはしない。
+	 */
+	static void wadeStep(FakeMember o, Vec3 target) {
+		markSteered(o);
+		Vec3 cur = o.getDeltaMovement();
+		double dx = target.x - o.getX();
+		double dz = target.z - o.getZ();
+		double len = Math.sqrt(dx * dx + dz * dz);
+		double vx = 0;
+		double vz = 0;
+		if (len > 0.05) {
+			double k = Math.min(WADE_SPEED, len) / len;
+			vx = dx * k;
+			vz = dz * k;
+			if (len > 0.4) {
+				float yaw = Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f);
+				o.setYRot(yaw);
+				o.setYHeadRot(yaw);
+				o.setYBodyRot(yaw);
+			}
+		}
+		double vy = cur.y;
+		if (o.horizontalCollision && target.y > o.getY() - 0.5) {
+			vy = Math.max(vy, 0.36);
+		}
+		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
+	}
+
+	private static final Map<FakeMember, Integer> STEERED = new WeakHashMap<>();
+
+	/** 泳ぎ・水の中の歩きを自前の速度で動かした印。MoveControl は次の tick に向きと入力を上書きしない（2つの目標で向きが往復しない）。 */
+	static void markSteered(FakeMember o) {
+		STEERED.put(o, o.tickCount);
+	}
+
+	static boolean steered(FakeMember o) {
+		Integer t = STEERED.get(o);
+		return t != null && o.tickCount - t <= 1;
 	}
 
 	/** 水深（足元の水柱の連続する水ブロック数）。 */

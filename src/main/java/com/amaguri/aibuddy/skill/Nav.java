@@ -277,10 +277,10 @@ final class Nav {
 
 	// ---- 泳ぐ / ボート ----
 
-	private void swimTowards() {
-		Vec3 target;
+	/** 泳ぐ・水の中を歩く時の向かう先: 経路の次の点（真上・すぐそばの点は飛ばす）か、目標への8ブロック先。 */
+	private Vec3 waterTarget() {
+		Vec3 target = null;
 		Path p = o.getNavigation().getPath();
-		target = null;
 		if (p != null && !p.isDone()) {
 			// 真上・すぐそば（水平1.2未満）の経路点は飛ばして、先の点へ向かう（真上の点では向きが定まらず回る）
 			for (int i = p.getNextNodeIndex(); i < p.getNodeCount(); i++) {
@@ -301,6 +301,11 @@ final class Nav {
 				target = goal;
 			}
 		}
+		return target;
+	}
+
+	private void swimTowards() {
+		Vec3 target = waterTarget();
 		double surface = Motion.waterSurfaceY(SkillUtil.level(o), o);
 		// 目標が水中深く（沈没船など）で近いときだけ潜る。それ以外は水面を泳ぐ
 		double dive = !Double.isNaN(surface) && goal.y < surface - 2.0 && SkillUtil.horiz(o.position(), goal) < 14 ? goal.y : Double.NaN;
@@ -526,6 +531,10 @@ final class Nav {
 		}
 		if (Motion.shouldSwim(o) && !o.isPassenger()) {
 			swimTowards();
+		} else if (o.isInWater() && !o.isPassenger()) {
+			// 浅い水・岸際（泳ぐほど深くない）: 浮いて水の抵抗で進まないので、歩く速さを自前で与える（泳ぎ姿勢にはしない）
+			Motion.endSwim(o);
+			Motion.wadeStep(o, waterTarget());
 		} else {
 			Motion.endSwim(o);
 			dasher.tick(dash);
