@@ -31,6 +31,7 @@ public final class MotionSkills {
 			case "barter" -> new BarterSkill(o, r, in.has("gold") ? (int) num(in, "gold") : 8);
 			case "boat" -> new BoatSkill(o, r, num(in, "x"), num(in, "y"), num(in, "z"));
 			case "fight_dragon" -> new DragonSkill(o, r);
+			case "golem_iron" -> new GolemIronSkill(o, r, in.has("count") ? (int) num(in, "count") : 4);
 			default -> null;
 		};
 	}
@@ -49,6 +50,8 @@ public final class MotionSkills {
 		out.add(tool("barter", "金インゴットをピグリンに投げて取引し、落ちた物を拾う。", props(integer("gold", "投げる個数（既定8）"))));
 		out.add(tool("boat", "ボートを作って（板材5）水を渡り、目標の座標へ行く。作れなければ泳ぐ。陸に着いたらボートは回収する。",
 				props(num("x", "X座標"), num("y", "Y座標"), num("z", "Z座標")), "x", "y", "z"));
+		out.add(tool("golem_iron", "村のアイアンゴーレムを1発殴って足元に3段積み、柱の上から倒して鉄インゴットを集める。丸石や土などのブロックが要る。",
+				props(integer("count", "集める鉄インゴットの数（既定4）"))));
 		out.add(tool("fight_dragon", "エンドでエンドラと戦う。クリスタルを壊し、止まり木の竜を殴り、ブレスをよける。倒したら知らせる。", props()));
 	}
 

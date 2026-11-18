@@ -1078,6 +1078,117 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (13) ゴーレムから鉄・掘らない移動 ----
+
+	private static final int GOLEM_FLOOR = 362;
+	private static final int WALL_FLOOR = 20;
+	private static final int WALL2_FLOOR = 50;
+
+	@GameTest(maxTicks = 2400)
+	public void collectsIronFromGolemOnPillar(GameTestHelper h) {
+		final int floor = GOLEM_FLOOR;
+		buildHall(h, floor, 24, 12);
+		FakeMember m = summon(h, 6.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 12));
+		m.getInventory().addItem(new ItemStack(Items.DIAMOND_SWORD));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.DIAMOND_LEGGINGS));
+		m.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.DIAMOND_BOOTS));
+		var g = h.spawn(net.minecraft.world.entity.EntityTypes.IRON_GOLEM, 16.5f, (float) (floor + 1), 4.5f);
+		String r = m.skills().start("golem_iron", json("count", 1));
+		h.assertTrue(!refused(r), "golem_iron が始まらない: " + r);
+		var st = new Object() {
+			boolean elevated;
+			double maxY;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			Vec3 p = rel(h, m);
+			st.maxY = Math.max(st.maxY, p.y);
+			if (p.y >= floor + 1 + 2.7) {
+				st.elevated = true;
+			}
+			if (t % 40 == 0) {
+				System.out.println("[goleMtest] t=" + t + " rel=" + p + " hp=" + m.getHealth() + " golemHp=" + g.getHealth()
+						+ " iron=" + count(m, Items.IRON_INGOT) + " status=" + m.skills().status());
+			}
+			if (!m.skills().isBusy() && t > 20) {
+				String res = m.skills().lastResult();
+				h.assertTrue(m.isAlive() && st.elevated, "柱に登っていない/死んだ maxY=" + st.maxY + " res=" + res);
+				h.assertTrue(!g.isAlive(), "ゴーレムが倒れていない res=" + res);
+				h.assertTrue(count(m, Items.IRON_INGOT) >= 1, "鉄を拾えていない res=" + res + " iron=" + count(m, Items.IRON_INGOT));
+				h.succeed();
+			} else if (t >= 2300) {
+				h.assertTrue(false, "終わらない status=" + m.skills().status() + " rel=" + p + " iron=" + count(m, Items.IRON_INGOT));
+			}
+		});
+	}
+
+	/** 壁の途中に隙間がある。ブロックを持たず、掘らずに隙間を回って向こうへ行く。 */
+	@GameTest(maxTicks = 700)
+	public void walksAroundWallWithoutDigging(GameTestHelper h) {
+		final int floor = WALL_FLOOR;
+		buildHall(h, floor, 30, 8);
+		for (int z = 1; z < WID - 2; z++) {
+			for (int y = 1; y <= 3; y++) {
+				h.setBlock(15, floor + y, z, Blocks.STONE);
+			}
+		}
+		FakeMember m = summon(h, 4.5f, 2.5f, false, floor);
+		Vec3 target = h.absoluteVec(new Vec3(25.5, floor + 1, 2.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			int stones = 0;
+			for (int z = 1; z < WID - 2; z++) {
+				for (int y = 1; y <= 3; y++) {
+					if (h.getBlockState(new net.minecraft.core.BlockPos(15, floor + y, z)).is(Blocks.STONE)) {
+						stones++;
+					}
+				}
+			}
+			h.assertTrue(stones == 3 * (WID - 3), "壁を掘った 残り " + stones);
+			if (rel(h, m).x > 23.5) {
+				h.succeed();
+			}
+		});
+	}
+
+	/** 隙間のない低い壁。掘らず、柱で越える。 */
+	@GameTest(maxTicks = 900)
+	public void climbsOverWallWithoutDigging(GameTestHelper h) {
+		final int floor = WALL2_FLOOR;
+		buildHall(h, floor, 30, 8);
+		for (int z = 1; z < WID - 1; z++) {
+			for (int y = 1; y <= 2; y++) {
+				h.setBlock(15, floor + y, z, Blocks.STONE);
+			}
+		}
+		FakeMember m = summon(h, 4.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 12));
+		Vec3 target = h.absoluteVec(new Vec3(25.5, floor + 1, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			int stones = 0;
+			for (int z = 1; z < WID - 1; z++) {
+				for (int y = 1; y <= 2; y++) {
+					if (h.getBlockState(new net.minecraft.core.BlockPos(15, floor + y, z)).is(Blocks.STONE)) {
+						stones++;
+					}
+				}
+			}
+			if (h.getTick() % 60 == 0) {
+				System.out.println("[walltest] t=" + h.getTick() + " rel=" + rel(h, m) + " stones=" + stones + " status=" + m.skills().status());
+			}
+			h.assertTrue(stones == 2 * (WID - 2), "壁を掘った 残り " + stones);
+			if (rel(h, m).x > 23.5) {
+				h.succeed();
+			}
+		});
+	}
+
 	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
 		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
 		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));

@@ -75,9 +75,17 @@ final class Nav {
 	private int bridged;
 
 
+	/** 地形を掘って進んでよいか（既定 false）。SkillRunner.setAllowDig で変える。 */
+	private final java.util.function.BooleanSupplier allowDig;
+
 	Nav(FakeMember o, Digger digger) {
+		this(o, digger, () -> false);
+	}
+
+	Nav(FakeMember o, Digger digger, java.util.function.BooleanSupplier allowDig) {
 		this.o = o;
 		this.digger = digger;
+		this.allowDig = allowDig;
 		this.dasher = new Motion.Dasher(o);
 	}
 
@@ -527,14 +535,35 @@ final class Nav {
 			o.getNavigation().stop();
 			return;
 		}
-		// 5秒詰まったら 掘って進む → 柱 → 橋 → 回り込み の順
-		int s = stage++ % 4;
+		// 完全に閉じ込められている（足元の1ブロックを壊さないと動けない）ときだけ、許可が無くても掘る
+		if (trapped()) {
+			startDig();
+			return;
+		}
+		// 5秒詰まったら 回り込み → 柱 → 橋 の順。掘って進むのは allowDig のときだけ（最後）
+		boolean dig = allowDig.getAsBoolean();
+		int s = stage++ % (dig ? 4 : 3);
 		switch (s) {
-			case 0 -> startDig();
+			case 0 -> startDetour();
 			case 1 -> startPillar();
 			case 2 -> startBridge();
-			default -> startDetour();
+			default -> startDig();
 		}
+	}
+
+	/** 四方が壁で、頭上も塞がっているか（埋まった・囲まれた）。 */
+	private boolean trapped() {
+		ServerLevel l = SkillUtil.level(o);
+		BlockPos p = o.blockPosition();
+		int walls = 0;
+		for (Direction d : Direction.Plane.HORIZONTAL) {
+			BlockPos c = p.relative(d);
+			if (l.getBlockState(c).blocksMotion() && l.getBlockState(c.above()).blocksMotion()) {
+				walls++;
+			}
+		}
+		boolean roofed = l.getBlockState(p.above(2)).blocksMotion() || l.getBlockState(p.above()).blocksMotion();
+		return walls >= 4 && roofed || l.getBlockState(p.above()).blocksMotion() && l.getBlockState(p).blocksMotion();
 	}
 
 	// ---- DETOUR ----

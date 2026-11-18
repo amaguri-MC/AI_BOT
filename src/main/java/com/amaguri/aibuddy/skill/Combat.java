@@ -346,6 +346,9 @@ final class Combat {
 			}
 			return attackedMe || (e instanceof net.minecraft.world.entity.Mob pm && pm.getTarget() == o);
 		}
+		if (e instanceof net.minecraft.world.entity.animal.golem.IronGolem && o.skills().status().startsWith("アイアンゴーレム")) {
+			return false; // golem_iron 中: ゴーレムの相手はスキル側がする（柱の上から降りて近づかない・逃げない）
+		}
 		if (e instanceof NeutralMob nm) {
 			// エンダーマン・ゾンビピグリン等は怒っている（自分を狙っている）ときだけ
 			return attackedMe || (nm.isAngry() && e instanceof net.minecraft.world.entity.Mob m && m.getTarget() == o);

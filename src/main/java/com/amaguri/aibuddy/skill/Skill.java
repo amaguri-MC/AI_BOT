@@ -19,7 +19,7 @@ abstract class Skill {
 		this.o = o;
 		this.runner = runner;
 		this.digger = new Digger(o);
-		this.nav = new Nav(o, digger);
+		this.nav = new Nav(o, digger, () -> runner != null && runner.allowDig());
 	}
 
 	/** 開始直後に1回呼ばれる。できないなら理由（「できない: ...」）を返す。 */

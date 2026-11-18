@@ -40,6 +40,17 @@ public final class SkillRunner {
 	/** 脳から follow_player されたときに Autopilot を止める長さ（60秒） */
 	private static final int FOLLOW_PAUSE_TICKS = 20 * 60;
 
+	/** 地形を掘って進んでよいか。既定 false（ネザー要塞・マグマだまり探しなど必要なときだけ true）。 */
+	private volatile boolean allowDig;
+
+	public void setAllowDig(boolean on) {
+		this.allowDig = on;
+	}
+
+	public boolean allowDig() {
+		return allowDig;
+	}
+
 	public SkillRunner(FakeMember owner) {
 		this.owner = owner;
 		this.reporter = new AutoReporter(owner);
@@ -206,6 +217,7 @@ public final class SkillRunner {
 	/** 次元移動で作り直されたとき、前の個体の報告済み記録を引き継ぐ。 */
 	public synchronized void inheritFrom(SkillRunner prev) {
 		reporter.inheritFrom(prev.reporter);
+		allowDig = prev.allowDig;
 	}
 
 	public synchronized void stop() {
