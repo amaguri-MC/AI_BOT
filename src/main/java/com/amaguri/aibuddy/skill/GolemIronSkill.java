@@ -19,8 +19,12 @@ final class GolemIronSkill extends Skill {
 
 	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, COLLECT }
 
-	/** 殴ったあと、ゴーレムから水平にこれだけ離れてから積む（升に重なる・打ち上げられるのを防ぐ） */
-	private static final double BACKOFF_DIST = 2.5;
+	/**
+	 * 殴ったあと、ゴーレムから水平にこれだけ（体と体のすき間で）離れてから積む。升に重なる・打ち上げられるのを防ぎ、
+	 * ゴーレム（毎秒約2.5ブロック）が着く前に3段（約2秒）積み終えて、手の届かない高さにいるため。最低でも2.5
+	 */
+	private static final double BACKOFF_DIST = 6.0;
+	private static final double BACKOFF_MIN = 2.5;
 
 	private final int wanted;
 	private final Combat.State cs;
@@ -151,8 +155,9 @@ final class GolemIronSkill extends Skill {
 		double hd = SkillUtil.horiz(o.position(), golem.position()) - (golem.getBbWidth() + o.getBbWidth()) / 2.0;
 		Vec3 dir = Motion.safeAway(o, o.position().subtract(golem.position()));
 		boolean far = hd >= BACKOFF_DIST;
-		if ((far && o.onGround()) || (o.onGround() && (dir == null || phaseTicks > 100))) {
-			// 離れた（または離れる先が無い・時間切れなら、その場で積む）
+		boolean enough = hd >= BACKOFF_MIN;
+		if ((far && o.onGround()) || (o.onGround() && enough && (dir == null || phaseTicks > 80)) || (o.onGround() && phaseTicks > 160)) {
+			// 離れた（離れる先が無い・時間切れなら、最低限離れていればその場で積む）
 			Motion.halt(o);
 			baseY = Math.floor(o.getY() + 0.01);
 			pillar.reset();
