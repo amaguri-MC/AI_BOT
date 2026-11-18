@@ -308,7 +308,7 @@ final class MineSkill extends Skill {
 			state = State.FIND;
 			return;
 		}
-		nav.go(c, 0.9, 1.1);
+		nav.go(c, 2.0, 1.1); // 壁の中の鉱石へは面まで寄る（掘り進まない）
 		nav.tick();
 		if (nav.failed()) {
 			ban(target);
