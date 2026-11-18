@@ -33,6 +33,8 @@ public class AiBuddyGameTests {
 	private static final int SPEED_FLOOR = 60;
 	/** 穴を掘らないテスト専用の高さ */
 	private static final int NODIG_FLOOR = 280; // 他のテスト（260 の浅瀬など）と重ならない高さ
+	/** 土の平地で丸石を取るテスト専用の高さ（下に8段。60 の速度テストの天井・80 のテストと重ならない） */
+	private static final int COBBLE_FLOOR = 74;
 	/** スタート待ちテスト専用の高さ */
 	private static final int START_FLOOR = 100;
 	/** 寝るテスト専用の高さ（隣のテストの舞台がベッドを上書きしないように） */
@@ -444,6 +446,38 @@ public class AiBuddyGameTests {
 			}
 			if (now >= 600) {
 				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(5, floor - 2, 4)).is(Blocks.IRON_ORE), "埋まった鉄鉱石を掘った");
+				h.succeed();
+			}
+		});
+	}
+
+	// ---- 地表が全部土（下3段から石）の平地で、2分以内に丸石6を取って石ツルハシと石斧を作る ----
+
+	@GameTest(maxTicks = 2400)
+	public void dirtPlainCobbleToStoneTools(GameTestHelper h) {
+		final int floor = COBBLE_FLOOR;
+		buildArena(h, floor); // 床（地表）は土
+		for (int x = 0; x < LEN; x++) {
+			for (int z = 0; z < WID; z++) {
+				for (int y = 1; y <= 8; y++) {
+					h.setBlock(x, floor - y, z, y <= 2 ? Blocks.DIRT : Blocks.STONE);
+				}
+			}
+		}
+		FakeMember m = summon(h, 4.5f, 4.5f, true, floor);
+		m.autopilot().setFastForwardAllowed(false);
+		m.autopilot().start();
+		m.autopilot().skipTo(com.amaguri.aibuddy.run.Stage.STONE); // 原木・作業台・木のツルハシまで持った状態から
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			if (now % 100 == 0) {
+				System.out.println("[cobbletest] t=" + now + " goal=" + m.autopilot().goalText() + " status=" + m.skills().status()
+						+ " rel=" + rel(h, m));
+			}
+			if (!m.isAlive()) {
+				h.fail("メンバーが死んだ（status=" + m.skills().status() + "）");
+			}
+			if (count(m, Items.STONE_PICKAXE) >= 1 && count(m, Items.STONE_AXE) >= 1) {
 				h.succeed();
 			}
 		});

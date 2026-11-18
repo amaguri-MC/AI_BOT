@@ -149,7 +149,8 @@ final class MineSkill extends Skill {
 				case "ore" -> hit = p.endsWith("_ore") || p.equals("ancient_debris");
 				case "log" -> hit = p.endsWith("_log") || p.endsWith("_stem");
 				case "nether_quartz" -> hit = p.equals("nether_quartz_ore");
-				case "stone" -> hit = p.equals("stone");
+				// 丸石が出る石だけ（安山岩・閃緑岩・花崗岩などは数えない）
+				case "stone" -> hit = RunSkills.isCobbleStone(p);
 				default -> hit = p.equals(q) || p.equals(q + "_ore") || p.equals("deepslate_" + q + "_ore")
 						|| (q.endsWith("_ore") && p.equals("deepslate_" + q));
 			}
