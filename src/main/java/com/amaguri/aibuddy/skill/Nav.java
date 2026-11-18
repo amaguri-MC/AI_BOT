@@ -292,6 +292,7 @@ final class Nav {
 				// 後ろの点（目標へ今より遠い点）は選ばない: 前の点と交互に選ぶと向きが毎tick反転して回る
 				if (hd >= 1.2 && SkillUtil.horiz(n, goal) < SkillUtil.horiz(o.position(), goal) + 0.5) {
 					target = n;
+					p.setNextNodeIndex(i); // 泳いで通り過ぎた点を経路からも進める（陸に上がった後に後ろの点へ戻らない）
 					break;
 				}
 			}
@@ -472,6 +473,12 @@ final class Nav {
 		// UNVERIFIED: 固体ブロックを目標にした moveTo は部分経路になる想定（canReach=false でも歩く）。詰まれば rescue() が掘る。
 		PathNavigation nav = o.getNavigation();
 		sinceRepath++;
+		if (Motion.steered(o) && !o.isInWater()) {
+			// 水から上がった: 泳いでいる間の経路（後ろに残った点）を捨てて、陸の経路を引き直す
+			nav.stop();
+			pathTarget = null;
+			sinceRepath = REPATH_MIN_TICKS;
+		}
 		boolean dash = sprint || distance() >= DASH_DISTANCE;
 		double mod = Motion.speedMod(o, dash, speed);
 		// 経路が終わっている（区間の継ぎ目・開始直後・失敗）なら同じtickで次を出す（2tickの暴走ガードだけ）。
