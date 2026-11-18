@@ -32,7 +32,7 @@ public class AiBuddyGameTests {
 	/** 速度テスト専用の高さ（他テストの舞台と重ならない） */
 	private static final int SPEED_FLOOR = 60;
 	/** 穴を掘らないテスト専用の高さ */
-	private static final int NODIG_FLOOR = 260;
+	private static final int NODIG_FLOOR = 280; // 他のテスト（260 の浅瀬など）と重ならない高さ
 	/** スタート待ちテスト専用の高さ */
 	private static final int START_FLOOR = 100;
 	/** 寝るテスト専用の高さ（隣のテストの舞台がベッドを上書きしないように） */
