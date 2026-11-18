@@ -73,7 +73,13 @@ public final class Slur {
 				sb.append('…');
 			}
 		}
-		return sb.toString();
+		String out = sb.toString();
+		if (out.indexOf('…') < 0) {
+			// 短い返事でも必ず途切れさせる（真ん中と最後に「…」）
+			int mid = Math.max(1, out.length() / 2);
+			out = out.substring(0, mid) + "…" + out.substring(mid) + "…";
+		}
+		return out;
 	}
 
 	private static boolean isKana(char c) {
