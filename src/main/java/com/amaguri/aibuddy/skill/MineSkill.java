@@ -72,7 +72,6 @@ final class MineSkill extends Skill {
 	private int reachLimit = 200;
 
 	private void ban(BlockPos p) {
-		System.out.println("[minedbg] BAN " + p + " state=" + state + " reachTicks=" + reachTicks + " obst=" + obstacles); // DEBUGMINE
 		blacklist.put(p.asLong(), ticks + 20 * 60);
 	}
 
@@ -184,11 +183,6 @@ final class MineSkill extends Skill {
 	@Override
 	void tick() {
 		ticks++;
-		if (ticks % 50 == 0) { // DEBUGMINE
-			System.out.println("[minedbg] t=" + ticks + " state=" + state + " target=" + target + " reachTicks=" + reachTicks + "/" + reachLimit
-					+ " obst=" + obstacles + " bl=" + blacklist.size() + " pos=" + o.blockPosition() + " navFailed=" + nav.failed() + " goal=" + nav.goal()
-					+ " eyeDist=" + (target == null ? -1 : o.getEyePosition().distanceTo(Vec3.atCenterOf(target))) + " radius=" + radius + " roams=" + roams);
-		}
 		if (ticks > 20 * 60 * 10) {
 			finishNow("時間がかかりすぎたのでやめた");
 			return;
@@ -295,6 +289,39 @@ final class MineSkill extends Skill {
 
 	// ---- GOTO ----
 
+	/** 目で鉱石が（間に石を挟まず）直接見えるか。 */
+	private boolean clearShot() {
+		ServerLevel l = SkillUtil.level(o);
+		BlockHitResult hit = l.clip(new ClipContext(o.getEyePosition(), Vec3.atCenterOf(target), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, o));
+		if (hit.getType() != HitResult.Type.BLOCK) {
+			return true;
+		}
+		BlockPos first = hit.getBlockPos();
+		return first.equals(target) || blocks.contains(l.getBlockState(first).getBlock());
+	}
+
+	/** 鉱石の空気に面した側で、立てる足場（足元が固く、頭上まで空いている）のうち一番近いもの。 */
+	private BlockPos standCell() {
+		ServerLevel l = SkillUtil.level(o);
+		BlockPos best = null;
+		double bd = Double.MAX_VALUE;
+		for (Direction dir : Direction.Plane.HORIZONTAL) {
+			BlockPos c = target.relative(dir);
+			for (int dy = -1; dy <= 0; dy++) {
+				BlockPos f = c.above(dy);
+				if (!l.getBlockState(f).blocksMotion() && !l.getBlockState(f.above()).blocksMotion()
+						&& l.getBlockState(f.below()).blocksMotion()) {
+					double d = o.distanceToSqr(Vec3.atBottomCenterOf(f));
+					if (d < bd) {
+						bd = d;
+						best = f;
+					}
+				}
+			}
+		}
+		return best;
+	}
+
 	private boolean stillThere() {
 		return blocks.contains(SkillUtil.level(o).getBlockState(target).getBlock());
 	}
@@ -305,7 +332,8 @@ final class MineSkill extends Skill {
 			return;
 		}
 		Vec3 c = Vec3.atCenterOf(target);
-		if (o.getEyePosition().distanceTo(c) <= 4.3) {
+		boolean noDig = !runner.allowDig();
+		if (o.getEyePosition().distanceTo(c) <= 4.3 && (!noDig || clearShot())) {
 			nav.stop();
 			state = State.DIG;
 			return;
@@ -317,7 +345,13 @@ final class MineSkill extends Skill {
 			state = State.FIND;
 			return;
 		}
-		nav.go(c, runner.allowDig() ? 0.9 : 2.0, 1.1); // 掘らない時は鉱石の面まで寄る
+		BlockPos stand = noDig ? standCell() : null;
+		if (stand != null) {
+			// 掘らない時は、鉱石の面（空気側）の真正面に立つ。斜めだと間の石が射線に入る
+			nav.go(Vec3.atBottomCenterOf(stand), 0.6, 1.1);
+		} else {
+			nav.go(c, noDig ? 2.0 : 0.9, 1.1);
+		}
 		nav.tick();
 		if (nav.failed()) {
 			ban(target);
@@ -362,7 +396,16 @@ final class MineSkill extends Skill {
 					digIsTarget = false;
 					extraOre = true;
 				}
-			} else if (++obstacles > (runner.allowDig() ? 30 : 0) || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
+			} else if (!runner.allowDig()) {
+				// 掘らない: 間の石は掘らず、面の正面へ立ち直す
+				if (++obstacles > 40 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
+					ban(target);
+					state = State.FIND;
+				} else {
+					state = State.GOTO;
+				}
+				return;
+			} else if (++obstacles > 30 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
 				ban(target);
 				state = State.FIND;
 				return;
