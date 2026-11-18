@@ -289,7 +289,8 @@ final class Nav {
 				if (hd >= 8) {
 					break;
 				}
-				if (hd >= 1.2) {
+				// 後ろの点（目標へ今より遠い点）は選ばない: 前の点と交互に選ぶと向きが毎tick反転して回る
+				if (hd >= 1.2 && SkillUtil.horiz(n, goal) < SkillUtil.horiz(o.position(), goal) + 0.5) {
 					target = n;
 					break;
 				}

@@ -289,10 +289,7 @@ final class Motion {
 			vz = dz * k;
 		}
 		if (len > 0.4) { // 真上・すぐそばの点では向きを変えない（回らない）
-			float yaw = Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f);
-			o.setYRot(yaw);
-			o.setYHeadRot(yaw);
-			o.setYBodyRot(yaw);
+			turnToward(o, Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f));
 		}
 		// 岸にぶつかったら（目標が自分より下でなければ）這い上がる
 		if (o.horizontalCollision && target.y > o.getY() - 0.5 && !dive) {
@@ -321,10 +318,7 @@ final class Motion {
 			vx = dx * k;
 			vz = dz * k;
 			if (len > 0.4) {
-				float yaw = Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f);
-				o.setYRot(yaw);
-				o.setYHeadRot(yaw);
-				o.setYBodyRot(yaw);
+				turnToward(o, Mth.wrapDegrees((float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90.0f));
 			}
 		}
 		double vy = cur.y;
@@ -332,6 +326,16 @@ final class Motion {
 			vy = Math.max(vy, 0.36);
 		}
 		o.setDeltaMovement(cur.x * 0.4 + vx * 0.6, vy, cur.z * 0.4 + vz * 0.6);
+	}
+
+	/** 水の中の向きは1tickに最大30度ずつ変える（目標が入れ替わっても、その場でぐるぐる回らない）。 */
+	private static void turnToward(FakeMember o, float yaw) {
+		float cur = o.getYRot();
+		float d = Mth.clamp(Mth.wrapDegrees(yaw - cur), -30.0f, 30.0f);
+		float y = Mth.wrapDegrees(cur + d);
+		o.setYRot(y);
+		o.setYHeadRot(y);
+		o.setYBodyRot(y);
 	}
 
 	private static final Map<FakeMember, Integer> STEERED = new WeakHashMap<>();

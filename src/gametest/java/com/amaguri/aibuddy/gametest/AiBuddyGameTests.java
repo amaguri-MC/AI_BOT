@@ -828,13 +828,13 @@ public class AiBuddyGameTests {
 		});
 	}
 
-	/** ① 陸から深い海（深さ6・幅44）へ歩いて入り、ボートの材料なしで対岸へ泳ぐ。 */
+	/** ① 陸から深い海（深さ6・幅37）へ歩いて入り、ボートの材料なしで対岸へ泳ぐ。 */
 	@GameTest(maxTicks = 700)
 	public void swimsAcrossDeepSeaFromShore(GameTestHelper h) {
 		final int floor = SEA_FLOOR;
-		buildCanal(h, floor, 56, 4, 47, 6); // 水面44ブロック（36を超えるので区間に区切って泳ぐ）
+		buildCanal(h, floor, 48, 4, 40, 6); // 水面37ブロック（目標まで36を超えるので区間に区切って泳ぐ）。48より長いと隣の区画に食い込む
 		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
-		crossWater(h, m, "seatest", new Vec3(52.5, floor + 1, 4.5), 48.5);
+		crossWater(h, m, "seatest", new Vec3(44.5, floor + 1, 4.5), 41.5);
 	}
 
 	/** ② 水深2の浅瀬（幅11）を横切る。 */
