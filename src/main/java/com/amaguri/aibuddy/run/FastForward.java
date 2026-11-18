@@ -293,8 +293,11 @@ final class FastForward {
 			}
 			case WOODEN_PICK -> {
 				if (full && c.pickTier() < 1) {
+					// 原木2本＝板材8: 木のツルハシ3＋棒8本ぶん4（棒は石ツルハシ・石斧に4本使う）。板材1が残る
 					add(Items.WOODEN_PICKAXE, 1);
 					o.getInventory().removeItemType(Items.OAK_LOG, 2);
+					ensure(Items.STICK, 6);
+					ensure(Items.OAK_PLANKS, 1);
 				}
 			}
 			case STONE -> {

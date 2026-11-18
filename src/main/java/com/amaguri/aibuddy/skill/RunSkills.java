@@ -71,6 +71,37 @@ public final class RunSkills {
 		o.skills().setAllowDig(on);
 	}
 
+	/** 丸石（石の道具の材料）が出る石の ID か: stone・cobblestone・deepslate・cobbled_deepslate・blackstone。 */
+	public static boolean isCobbleStone(String path) {
+		return switch (path) {
+			case "stone", "cobblestone", "deepslate", "cobbled_deepslate", "blackstone" -> true;
+			default -> false;
+		};
+	}
+
+	static boolean isCobbleStone(BlockState s) {
+		return s.is(Blocks.STONE) || s.is(Blocks.COBBLESTONE) || s.is(Blocks.DEEPSLATE) || s.is(Blocks.COBBLED_DEEPSLATE)
+				|| s.is(Blocks.BLACKSTONE);
+	}
+
+	/** 半径 r に、立った位置から届く丸石の出る石があるか（斜面・崖の面・洞窟の口）。 */
+	public static boolean reachableStoneWithin(FakeMember o, int r) {
+		ServerLevel l = SkillUtil.level(o);
+		BlockPos c = o.blockPosition();
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (int dx = -r; dx <= r; dx++) {
+			for (int dz = -r; dz <= r; dz++) {
+				for (int dy = -6; dy <= 6; dy++) {
+					m.set(c.getX() + dx, c.getY() + dy, c.getZ() + dz);
+					if (l.hasChunkAt(m) && isCobbleStone(l.getBlockState(m)) && !SkillUtil.nearLava(l, m) && reachableFromStand(l, m.immutable())) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	/** 掘ってよいか（SkillRunner.allowDig を読むだけ）。 */
 	public static boolean digAllowed(FakeMember o) {
 		return o.skills().allowDig();
@@ -134,6 +165,7 @@ public final class RunSkills {
 			case "enter_portal" -> new EnterPortal(o, r, optPos(in));
 			case "loot_chests" -> new LootChests(o, r, intOr(in, "radius", 16));
 			case "place_table" -> new PlaceTable(o, r);
+			case "dig_cobble" -> new DigCobble(o, r, intOr(in, "count", 6));
 			case "dig_treasure" -> new DigTreasure(o, r);
 			case "locate_stronghold" -> new LocateStronghold(o, r);
 			case "fill_end_portal" -> new FillEndPortal(o, r);
@@ -375,6 +407,210 @@ public final class RunSkills {
 	// =====================================================================
 	// スキル
 	// =====================================================================
+
+	/**
+	 * 序盤の丸石だけは「足元から浅く掘る」: 土を1〜3段どけた下の石を、戻れる階段形に最大5段まで掘り下げて取る。
+	 * 縦穴は掘らない（1段ごとに1マス前へ進む）。5段で足りなければ、その段の左右の壁の石を取る。
+	 * Nav の掘る許可（allowDig）は使わない（このスキルが自分の Digger で掘るだけ。終わったら何も残さない）。
+	 */
+	static final class DigCobble extends Skill {
+		private static final int MAX_STEPS = 5;
+		private final int want;
+		private int start;
+		private Direction dir;
+		private int steps;
+		private int moveTicks;
+		private BlockPos moveTo;
+		private int ticks;
+		private int idleAfter;
+		/** 降りてきた足の位置（帰りはこれを逆にたどって地表へ戻る。柱を積まない） */
+		private final List<BlockPos> path = new ArrayList<>();
+		private String doneResult;
+		private int backIdx = -1;
+		private int backTicks;
+
+		DigCobble(FakeMember o, SkillRunner r, int count) {
+			super(o, r);
+			this.want = Math.max(1, Math.min(16, count));
+		}
+
+		private int got() {
+			return Inv.count(o, net.minecraft.tags.ItemTags.STONE_TOOL_MATERIALS) - start;
+		}
+
+		@Override
+		String begin() {
+			if (Inv.count(o, net.minecraft.tags.ItemTags.PICKAXES) <= 0) {
+				return "できない: 道具が足りない 木のツルハシ";
+			}
+			ServerLevel l = SkillUtil.level(o);
+			if (!l.getBlockState(o.blockPosition().below()).blocksMotion()) {
+				return "できない: 足元が固くない";
+			}
+			start = Inv.count(o, net.minecraft.tags.ItemTags.STONE_TOOL_MATERIALS);
+			path.add(o.blockPosition());
+			// 掘り下げる向き: 5段先まで液体・溶岩・空洞が無く、固いブロックが多い向き
+			int best = -1;
+			for (Direction d : Direction.Plane.HORIZONTAL) {
+				int score = 0;
+				boolean bad = false;
+				BlockPos f = o.blockPosition();
+				for (int k = 1; k <= MAX_STEPS && !bad; k++) {
+					BlockPos n = f.relative(d, k).below(k);
+					for (int up = 0; up <= 2; up++) {
+						BlockState s = l.getBlockState(n.above(up));
+						if (!s.getFluidState().isEmpty() || SkillUtil.nearLava(l, n.above(up))) {
+							bad = true;
+						}
+						if (s.blocksMotion()) {
+							score++;
+						}
+						if (isCobbleStone(s)) {
+							score += 2;
+						}
+					}
+					if (!l.getBlockState(n.below()).blocksMotion()) {
+						bad = true; // 下が空洞（落ちる）
+					}
+				}
+				if (!bad && score > best) {
+					best = score;
+					dir = d;
+				}
+			}
+			if (dir == null) {
+				return "できない: 浅く掘れる場所が無い（下に水・溶岩・空洞）";
+			}
+			return null;
+		}
+
+		@Override
+		void tick() {
+			ticks++;
+			ServerLevel l = SkillUtil.level(o);
+			if (doneResult != null) {
+				if (tickBack() || ticks > 20 * 130) {
+					finish(doneResult, null);
+				}
+				return;
+			}
+			if (got() >= want) {
+				if (++idleAfter > 10) { // 落ちた丸石を拾う間
+					done("丸石を" + got() + "個取った（" + steps + "段掘り下げた）");
+				}
+				return;
+			}
+			if (ticks > 20 * 100) {
+				done(got() > 0 ? "丸石を" + got() + "個取った（時間切れ）" : "できない: 浅く掘っても石が取れない");
+				return;
+			}
+			if (digger.active()) {
+				if (digger.tick() == Digger.PROGRESS) {
+					return;
+				}
+			}
+			if (moveTo != null) {
+				if (o.blockPosition().equals(moveTo) || ++moveTicks > 30) {
+					if (!o.blockPosition().equals(moveTo)) {
+						o.setPos(moveTo.getX() + 0.5, moveTo.getY(), moveTo.getZ() + 0.5);
+					}
+					moveTo = null;
+					steps++;
+					path.add(o.blockPosition());
+				} else {
+					o.getMoveControl().setWantedPosition(moveTo.getX() + 0.5, moveTo.getY(), moveTo.getZ() + 0.5, 1.0);
+				}
+				return;
+			}
+			BlockPos f = o.blockPosition();
+			if (steps < MAX_STEPS) {
+				BlockPos n = f.relative(dir).below();
+				boolean floorOk = l.getBlockState(n.below()).blocksMotion() && l.getBlockState(n.below()).getFluidState().isEmpty();
+				if (floorOk && !SkillUtil.nearLava(l, n)) {
+					// 上から順に: 頭上の通り道 → 頭 → 足
+					for (BlockPos p : new BlockPos[] { n.above(2), n.above(), n }) {
+						if (breakable(l, p)) {
+							if (!digger.begin(p)) {
+								steps = MAX_STEPS; // 掘れない物（岩盤など）→ 横の壁へ
+							}
+							return;
+						}
+						if (!l.getBlockState(p).getFluidState().isEmpty()) {
+							steps = MAX_STEPS;
+							return;
+						}
+					}
+					moveTo = n;
+					moveTicks = 0;
+					return;
+				}
+				steps = MAX_STEPS; // 下に降りられない → この段の壁から取る
+			}
+			// この段の左右と正面の壁（足・頭の高さ）の石を取る
+			for (Direction d : new Direction[] { dir.getClockWise(), dir.getCounterClockWise(), dir }) {
+				for (BlockPos p : new BlockPos[] { f.relative(d), f.relative(d).above() }) {
+					BlockState s = l.getBlockState(p);
+					if (isCobbleStone(s) && !SkillUtil.nearLava(l, p) && !exposesFluid(l, p)) {
+						digger.begin(p);
+						return;
+					}
+				}
+			}
+			done(got() > 0 ? "丸石を" + got() + "個取った（ここまで）" : "できない: 浅く掘っても石が取れない");
+		}
+
+		/** 取り終えた: 階段を逆にたどって地表へ戻ってから終わる。 */
+		private void done(String result) {
+			doneResult = result;
+			digger.cancel();
+			backIdx = path.size() - 1;
+			backTicks = 0;
+		}
+
+		/** 帰り道を1tick進める。着いたら true。 */
+		private boolean tickBack() {
+			while (backIdx >= 0 && o.blockPosition().equals(path.get(backIdx))) {
+				backIdx--;
+				backTicks = 0;
+			}
+			if (backIdx < 0) {
+				return true;
+			}
+			BlockPos t = path.get(backIdx);
+			if (++backTicks > 30) {
+				o.setPos(t.getX() + 0.5, t.getY(), t.getZ() + 0.5); // 1段上がる最後の一歩
+				backTicks = 0;
+				return false;
+			}
+			if (t.getY() > o.blockPosition().getY() && o.onGround() && backTicks % 8 == 1) {
+				o.getJumpControl().jump();
+			}
+			o.getMoveControl().setWantedPosition(t.getX() + 0.5, t.getY(), t.getZ() + 0.5, 1.0);
+			return false;
+		}
+
+		private static boolean breakable(ServerLevel l, BlockPos p) {
+			BlockState s = l.getBlockState(p);
+			return !s.isAir() && s.getFluidState().isEmpty() && s.getDestroySpeed(l, p) >= 0 && s.blocksMotion();
+		}
+
+		private static boolean exposesFluid(ServerLevel l, BlockPos p) {
+			for (Direction d : Direction.values()) {
+				if (!l.getBlockState(p.relative(d)).getFluidState().isEmpty()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		@Override
+		String status() {
+			if (doneResult != null) {
+				return "掘った階段を上って戻っている";
+			}
+			return "足元から浅く掘って丸石を取っている(" + Math.max(0, got()) + "/" + want + "、" + steps + "段)";
+		}
+	}
 
 	/** 持っている作業台を足元の横に置いて覚える（作業台はここで使う）。 */
 	static final class PlaceTable extends Skill {
