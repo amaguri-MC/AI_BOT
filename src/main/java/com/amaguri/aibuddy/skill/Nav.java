@@ -547,7 +547,17 @@ final class Nav {
 			return;
 		}
 		// 5秒詰まったら 回り込み → 柱 → 橋 の順。掘って進むのは allowDig のときだけ（最後）
-		boolean dig = ownAllowDig || allowDig.getAsBoolean();
+		if (ownAllowDig) {
+			// 鉱石・要塞へ掘り進むスキルは従来どおり 掘る → 柱 → 橋 → 回り込み
+			switch (stage++ % 4) {
+				case 0 -> startDig();
+				case 1 -> startPillar();
+				case 2 -> startBridge();
+				default -> startDetour();
+			}
+			return;
+		}
+		boolean dig = allowDig.getAsBoolean();
 		int s = stage++ % (dig ? 4 : 3);
 		switch (s) {
 			case 0 -> startDetour();
