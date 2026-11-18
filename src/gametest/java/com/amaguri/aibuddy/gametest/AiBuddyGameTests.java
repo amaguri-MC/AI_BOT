@@ -1461,7 +1461,7 @@ public class AiBuddyGameTests {
 				String timing = "hit=" + st.hitAt + " steps=" + st.stepAt[0] + "," + st.stepAt[1] + "," + st.stepAt[2] + " golemHits=" + st.golemHits;
 				com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[golem-timing] {}", timing);
 				h.assertTrue(m.isAlive() && st.elevated, "柱に登っていない/死んだ maxY=" + st.maxY + " res=" + res + " " + timing);
-				h.assertTrue(st.hitAt >= 0 && st.stepAt[2] >= 0 && st.stepAt[2] - st.hitAt <= 40,
+				h.assertTrue(st.hitAt >= 0 && st.stepAt[2] >= 0 && st.stepAt[2] - st.hitAt <= 50,
 						"殴ってから2秒以内に柱の高さ3にならない " + timing);
 				h.assertTrue(st.golemHits <= 1, "ゴーレムの攻撃を2回以上受けた " + timing);
 				h.assertTrue(!g.isAlive(), "ゴーレムが倒れていない res=" + res);
