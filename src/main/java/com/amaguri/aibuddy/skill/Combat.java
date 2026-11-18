@@ -219,9 +219,6 @@ final class Combat {
 	private static boolean creeperTick(FakeMember o, ServerLevel l, State st, Creeper c, List<LivingEntity> aggr) {
 		double d = o.distanceTo(c);
 		boolean swelling = c.getSwellDir() > 0 || c.isIgnited();
-		if (o.tickCount % 10 == 0) { // DEBUGCREEP
-			System.out.println("[creepdbg] d=" + d + " swelling=" + swelling + " strong=" + strongWeapon(o) + " aggr=" + aggr.size() + " dir=" + Motion.safeAway(o, o.position().subtract(c.position())) + " pos=" + o.position() + " v=" + o.getDeltaMovement() + " fighting=" + st.fighting + " back=" + st.backingOff);
-		}
 		int n = l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(16, 6, 16), Creeper::isAlive).size();
 		boolean alone = true;
 		for (LivingEntity e : aggr) {
@@ -255,7 +252,7 @@ final class Combat {
 			st.fighting = false;
 			st.calm = 0;
 			lowerShield(o, st);
-			Motion.face(o, c.getEyePosition());
+			// 向きは進む方向に任せる（creeper の方を向くと MoveControl の回頭と喧嘩して進めない）
 			o.setSprinting(true);
 			Vec3 to = o.position().add(dir.scale(6));
 			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
