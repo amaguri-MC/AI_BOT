@@ -227,7 +227,7 @@ final class Combat {
 			}
 		}
 		boolean armed = strongWeapon(o) && n == 1 && alone && o.getHealth() >= 10;
-		if (armed && !(swelling && c.getSwelling(1.0f) >= 0.4f && d < 6.0)) {
+		if (armed && !(swelling && c.getSwelling(1.0f) >= 0.2f && d < 6.0)) {
 			// 膨らむ前に近づいて倒す（膨らみ始めても、導火線が短くなるまでは殴り続ける）
 			st.backingOff = false;
 			st.engage = true;
