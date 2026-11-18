@@ -423,6 +423,11 @@ public final class RunSkills {
 		private BlockPos moveTo;
 		private int ticks;
 		private int idleAfter;
+		/** 降りてきた足の位置（帰りはこれを逆にたどって地表へ戻る。柱を積まない） */
+		private final List<BlockPos> path = new ArrayList<>();
+		private String doneResult;
+		private int backIdx = -1;
+		private int backTicks;
 
 		DigCobble(FakeMember o, SkillRunner r, int count) {
 			super(o, r);
@@ -443,6 +448,7 @@ public final class RunSkills {
 				return "できない: 足元が固くない";
 			}
 			start = Inv.count(o, net.minecraft.tags.ItemTags.STONE_TOOL_MATERIALS);
+			path.add(o.blockPosition());
 			// 掘り下げる向き: 5段先まで液体・溶岩・空洞が無く、固いブロックが多い向き
 			int best = -1;
 			for (Direction d : Direction.Plane.HORIZONTAL) {
@@ -482,14 +488,20 @@ public final class RunSkills {
 		void tick() {
 			ticks++;
 			ServerLevel l = SkillUtil.level(o);
+			if (doneResult != null) {
+				if (tickBack() || ticks > 20 * 130) {
+					finish(doneResult, null);
+				}
+				return;
+			}
 			if (got() >= want) {
 				if (++idleAfter > 10) { // 落ちた丸石を拾う間
-					finish("丸石を" + got() + "個取った（" + steps + "段掘り下げた）", null);
+					done("丸石を" + got() + "個取った（" + steps + "段掘り下げた）");
 				}
 				return;
 			}
 			if (ticks > 20 * 100) {
-				finish(got() > 0 ? "丸石を" + got() + "個取った（時間切れ）" : "できない: 浅く掘っても石が取れない", null);
+				done(got() > 0 ? "丸石を" + got() + "個取った（時間切れ）" : "できない: 浅く掘っても石が取れない");
 				return;
 			}
 			if (digger.active()) {
@@ -504,6 +516,7 @@ public final class RunSkills {
 					}
 					moveTo = null;
 					steps++;
+					path.add(o.blockPosition());
 				} else {
 					o.getMoveControl().setWantedPosition(moveTo.getX() + 0.5, moveTo.getY(), moveTo.getZ() + 0.5, 1.0);
 				}
@@ -543,7 +556,37 @@ public final class RunSkills {
 					}
 				}
 			}
-			finish(got() > 0 ? "丸石を" + got() + "個取った（ここまで）" : "できない: 浅く掘っても石が取れない", null);
+			done(got() > 0 ? "丸石を" + got() + "個取った（ここまで）" : "できない: 浅く掘っても石が取れない");
+		}
+
+		/** 取り終えた: 階段を逆にたどって地表へ戻ってから終わる。 */
+		private void done(String result) {
+			doneResult = result;
+			digger.cancel();
+			backIdx = path.size() - 1;
+			backTicks = 0;
+		}
+
+		/** 帰り道を1tick進める。着いたら true。 */
+		private boolean tickBack() {
+			while (backIdx >= 0 && o.blockPosition().equals(path.get(backIdx))) {
+				backIdx--;
+				backTicks = 0;
+			}
+			if (backIdx < 0) {
+				return true;
+			}
+			BlockPos t = path.get(backIdx);
+			if (++backTicks > 30) {
+				o.setPos(t.getX() + 0.5, t.getY(), t.getZ() + 0.5); // 1段上がる最後の一歩
+				backTicks = 0;
+				return false;
+			}
+			if (t.getY() > o.blockPosition().getY() && o.onGround() && backTicks % 8 == 1) {
+				o.getJumpControl().jump();
+			}
+			o.getMoveControl().setWantedPosition(t.getX() + 0.5, t.getY(), t.getZ() + 0.5, 1.0);
+			return false;
 		}
 
 		private static boolean breakable(ServerLevel l, BlockPos p) {
@@ -562,6 +605,9 @@ public final class RunSkills {
 
 		@Override
 		String status() {
+			if (doneResult != null) {
+				return "掘った階段を上って戻っている";
+			}
 			return "足元から浅く掘って丸石を取っている(" + Math.max(0, got()) + "/" + want + "、" + steps + "段)";
 		}
 	}

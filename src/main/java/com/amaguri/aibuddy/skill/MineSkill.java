@@ -171,6 +171,8 @@ final class MineSkill extends Skill {
 			label = "鉱石";
 		} else if (q.equals("log")) {
 			label = "原木";
+		} else if (q.equals("stone")) {
+			label = "石";
 		} else if (!set.isEmpty()) {
 			Block first = set.iterator().next();
 			String path = BuiltInRegistries.BLOCK.getKey(first).getPath();
