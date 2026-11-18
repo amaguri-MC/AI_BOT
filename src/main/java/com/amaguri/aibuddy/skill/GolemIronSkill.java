@@ -21,7 +21,7 @@ final class GolemIronSkill extends Skill {
 	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, DESCEND, COLLECT }
 
 	/** 殴ったあと、ゴーレムとの体のすき間がこれになるまで離れてから積む（約2〜3ブロック） */
-	private static final double BACKOFF_GAP = 3.0;
+	private static final double BACKOFF_GAP = 2.5;
 	/** 柱の上でゴーレムが寄ってくるのを待つ最大 tick（10秒）。来なければ降りてやり直す */
 	private static final int WAIT_TICKS = 200;
 	private static final int MAX_RETRIES = 3;
@@ -169,6 +169,7 @@ final class GolemIronSkill extends Skill {
 		Vec3 dir = Motion.safeAway(o, o.position().subtract(golem.position()));
 		if (o.onGround() && (gap() >= BACKOFF_GAP || dir == null || phaseTicks > 30)) {
 			startPillar();
+			pillarUp(); // 同じ tick に最初の跳びを出す（1tickでも早く高さを取る）
 			return;
 		}
 		if (dir != null) {
