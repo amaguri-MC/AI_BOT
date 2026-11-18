@@ -142,19 +142,23 @@ final class Plan {
 				// 海が遠ければ村（鍛冶屋のチェスト・パン）
 				t.add(once("village_find", "village_tried", c -> c.overworld(), "find_structure", c -> j("type", "village", "radius", 12), 20 * 240, "村を探す"));
 				t.add(once("village_loot", "village_looted", c -> near(c, "village", 64), "loot_chests", c -> j("radius", 40), 20 * 120, "村のチェスト"));
+				// 村のアイアンゴーレム: 柱用の丸石3を持ってから、殴る→足元に3マス積む→上から倒して鉄を拾う（golem_iron は別担当のスキル）
+				t.add(row("pillar_blocks", c -> near(c, "village", 64) && ironShort(c) && c.cobble() < 3 && !c.ap.flag("golem_given_up"), "mine", c -> j("block", "stone", "count", 3 - c.cobble()), 20 * 60, "柱用の丸石"));
+				t.add(row("golem", c -> near(c, "village", 64) && ironShort(c) && c.cobble() >= 3 && !c.ap.flag("golem_given_up"), "golem_iron", c -> j("count", Math.max(1, ironNeed(c) - c.ingots())), 20 * 120, "ゴーレムから鉄"));
 				// 廃ポータル（チェストに火打石・黒曜石・金）。溶岩だまりはゲートの段階で探す
 				t.add(once("ruin_find", "ruin_tried", c -> c.overworld(), "find_structure", c -> j("type", "ruined_portal", "radius", 8), 20 * 120, "廃ポータルを探す"));
 				t.add(once("ruin_loot", "ruin_looted", c -> near(c, RunSkills.MARK_RUIN, 20), "loot_chests", c -> j("radius", 16), 20 * 60, "廃ポータルのチェスト"));
 				// 見つかった物で足りない時だけ、見えている鉄鉱石を少し掘る
-				t.add(row("iron_visible", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c) && c.exposedIron(16), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 90, "見えている鉄鉱石を少し"));
+				t.add(row("iron_visible", c -> ironShort(c) && c.exposedIron(16), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 90, "見えている鉄鉱石を少し（立って届く物だけ）"));
 				t.add(row("gravel", c -> !hasIgniter(c) && !c.has(Items.FLINT) && !c.ap.flintGaveUp(), "mine", c -> j("block", "gravel", "count", 3), 60 * 20, "火打石用の砂利"));
 				// 受け皿1: 近くの探索を全部試し終えたら、範囲を広げてもう一度だけ探す
 				t.add(once("village_wide", "village_wide_tried", c -> c.overworld() && exploredAll(c) && ironNeed(c) > 0, "find_structure", c -> j("type", "village", "radius", 32), 20 * 360, "遠くの村を探す"));
 				t.add(once("village_wide_loot", "village_wide_looted", c -> c.ap.flag("village_wide_tried") && near(c, "village", 64), "loot_chests", c -> j("radius", 40), 20 * 120, "村のチェスト"));
 				t.add(once("ruin_wide", "ruin_wide_tried", c -> c.overworld() && exploredAll(c) && ironNeed(c) > 0, "find_structure", c -> j("type", "ruined_portal", "radius", 24), 20 * 300, "遠くの廃ポータルを探す"));
 				t.add(once("ruin_wide_loot", "ruin_wide_looted", c -> c.ap.flag("ruin_wide_tried") && near(c, RunSkills.MARK_RUIN, 20), "loot_chests", c -> j("radius", 16), 20 * 60, "廃ポータルのチェスト"));
-				// 受け皿2: それでも足りなければ、目的のある鉄掘り（バケツ2・火打石に要る数だけ。掘れない所は MineSkill のブラックリストと行のクールダウンで飛ばす）
-				t.add(row("iron_dig", c -> c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c) && exploredAll(c) && c.ap.flag("village_wide_tried") && c.ap.flag("ruin_wide_tried"), "mine", c -> j("block", "iron", "count", Math.max(1, ironNeed(c) - c.ingots() - c.n(Items.RAW_IRON))), 20 * 180, "必要な分だけ鉄を掘る"));
+				// 受け皿2: 沈没船も範囲を広げる（穴は掘らない。トンネル・下掘りの鉄掘りはしない）
+				t.add(once("shipwreck_wide", "shipwreck_wide_tried", c -> c.overworld() && exploredAll(c) && ironShort(c), "find_structure", c -> j("type", "shipwreck", "radius", 24), 20 * 360, "遠くの沈没船を探す"));
+				t.add(once("shipwreck_wide_loot", "shipwreck_wide_looted", c -> c.ap.flag("shipwreck_wide_tried") && near(c, "shipwreck", 24), "loot_chests", c -> j("radius", 16), 20 * 90, "沈没船のチェスト"));
 				t.add(row("furnace_cobble2", c -> c.n(Items.RAW_IRON) > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
 			}
 			case FOOD -> {
@@ -242,6 +246,11 @@ final class Plan {
 	static int ironNeed(Ctx c) {
 		int buckets = c.n(Items.OBSIDIAN) >= 10 ? 0 : Math.max(0, 2 - c.buckets()) * 3;
 		return buckets + (hasIgniter(c) ? 0 : 1);
+	}
+
+	/** 鉄（生の鉄を含む）がまだ足りないか。 */
+	static boolean ironShort(Ctx c) {
+		return c.ingots() + c.n(Items.RAW_IRON) < ironNeed(c);
 	}
 
 	/** 序盤の近場の探索（宝・沈没船・村・廃ポータル）を全部試したか。 */

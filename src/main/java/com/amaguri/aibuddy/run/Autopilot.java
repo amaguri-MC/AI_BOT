@@ -130,6 +130,8 @@ public final class Autopilot {
 		}
 		SkillRunner r = o.skills();
 		Ctx c = new Ctx(o, this);
+		// 穴を掘ってよいのは、ネザー要塞を探す（BLAZE）とマグマだまりを探す（PORTAL）段階だけ
+		RunSkills.setDigAllowed(o, digStage(stage));
 		if (now % 20 == 0 || !r.isBusy()) {
 			if (advance(c) && ownSkill && r.isBusy()) {
 				// 段階が終わったのに前の段階の行動を続けない
@@ -355,6 +357,11 @@ public final class Autopilot {
 
 	// ================= 内部 =================
 
+	/** トンネル・下掘りを許す段階。 */
+	static boolean digStage(Stage s) {
+		return s == Stage.PORTAL || s == Stage.BLAZE;
+	}
+
 	/** 脳が始めた「ついていく」は一時停止の期限で止めて、自分の進行に戻る（60秒の約束）。 */
 	private void endBrainFollow() {
 		SkillRunner r = o.skills();
@@ -569,6 +576,9 @@ public final class Autopilot {
 
 	private void fail(String key) {
 		int n = fails.merge(key, 1, Integer::sum);
+		if (key.equals("golem") && n >= 3) {
+			flags.add("golem_given_up"); // 3回だめならゴーレムはあきらめて次の手へ
+		}
 		coolUntil.put(key, now + Math.min(20L * 60, 100L * n));
 	}
 
