@@ -694,21 +694,29 @@ final class Motion {
 
 	// ---- 足場 ----
 
-	private static final Item[] SCAFFOLD = { Items.COBBLESTONE, Items.DIRT, Items.NETHERRACK, Items.COBBLED_DEEPSLATE,
-			Items.STONE, Items.END_STONE, Items.BLACKSTONE, Items.OAK_PLANKS };
+	// 使う順: 価値の低い物から（土・ネザーラック・エンドストーン → 石系 → 板材）。丸石は道具・かまど用に残したいので後回し
+	private static final Item[] SCAFFOLD = { Items.DIRT, Items.NETHERRACK, Items.END_STONE, Items.COBBLED_DEEPSLATE,
+			Items.BLACKSTONE, Items.STONE, Items.COBBLESTONE, Items.OAK_PLANKS };
+	/** 丸石はこの個数までは足場に使わず残す（石の道具・かまど用） */
+	private static final int KEEP_COBBLE = 8;
+
+	private static int usable(FakeMember o, Item i) {
+		int n = Inv.count(o, i);
+		return i == Items.COBBLESTONE ? Math.max(0, n - KEEP_COBBLE) : n;
+	}
 
 	/** 足場にできるブロックの合計個数。 */
 	static int scaffoldCount(FakeMember o) {
 		int n = 0;
 		for (Item i : SCAFFOLD) {
-			n += Inv.count(o, i);
+			n += usable(o, i);
 		}
 		return n;
 	}
 
 	static boolean hasScaffold(FakeMember o) {
 		for (Item i : SCAFFOLD) {
-			if (Inv.count(o, i) > 0) {
+			if (usable(o, i) > 0) {
 				return true;
 			}
 		}
@@ -718,7 +726,7 @@ final class Motion {
 	/** 足場に使えるブロックを1個取り出して、そのブロックの状態を返す。無ければ null。 */
 	static BlockState takeScaffold(FakeMember o) {
 		for (Item i : SCAFFOLD) {
-			if (Inv.count(o, i) > 0 && i instanceof BlockItem bi) {
+			if (usable(o, i) > 0 && i instanceof BlockItem bi) {
 				Inv.remove(o, i, 1);
 				return bi.getBlock().defaultBlockState();
 			}
