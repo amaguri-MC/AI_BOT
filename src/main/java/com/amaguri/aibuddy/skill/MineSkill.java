@@ -273,6 +273,9 @@ final class MineSkill extends Skill {
 							break;
 						}
 					}
+					if (!exposed && !runner.allowDig()) {
+						continue; // 掘らない方針: 空気に面した（立って届く）鉱石だけ狙う
+					}
 					double score = d + (exposed ? 0 : 4);
 					if (score < bestScore) {
 						bestScore = score;
@@ -308,7 +311,7 @@ final class MineSkill extends Skill {
 			state = State.FIND;
 			return;
 		}
-		nav.go(c, 2.0, 1.1); // 壁の中の鉱石へは面まで寄る（掘り進まない）
+		nav.go(c, runner.allowDig() ? 0.9 : 2.0, 1.1); // 掘らない時は鉱石の面まで寄る
 		nav.tick();
 		if (nav.failed()) {
 			ban(target);
@@ -353,7 +356,7 @@ final class MineSkill extends Skill {
 					digIsTarget = false;
 					extraOre = true;
 				}
-			} else if (++obstacles > 1 || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
+			} else if (++obstacles > (runner.allowDig() ? 30 : 0) || SkillUtil.nearLava(l, first) || SkillUtil.isLiquidBlock(l.getBlockState(first))) {
 				ban(target);
 				state = State.FIND;
 				return;
