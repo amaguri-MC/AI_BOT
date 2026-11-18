@@ -17,7 +17,10 @@ import net.minecraft.world.phys.Vec3;
 final class GolemIronSkill extends Skill {
 	private static final int PILLAR_HEIGHT = 3;
 
-	private enum Phase { FIND, APPROACH, PILLAR, FIGHT, COLLECT }
+	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, COLLECT }
+
+	/** 殴ったあと、ゴーレムから水平にこれだけ離れてから積む（升に重なる・打ち上げられるのを防ぐ） */
+	private static final double BACKOFF_DIST = 2.5;
 
 	private final int wanted;
 	private final Combat.State cs;
@@ -31,6 +34,7 @@ final class GolemIronSkill extends Skill {
 	private double baseY;
 	private Vec3 deathPos;
 	private int golems;
+	private int occupied;
 
 	GolemIronSkill(FakeMember o, SkillRunner r, int count) {
 		super(o, r);
@@ -80,7 +84,7 @@ final class GolemIronSkill extends Skill {
 		phaseTicks++;
 		Combat.coolDown(o, cs);
 		if (ticks > 6000) {
-			finish("ゴーレム狩りに時間がかかりすぎた（鉄 " + gained() + "）", null);
+			failWith("ゴーレム狩りに時間がかかりすぎた（鉄 " + gained() + "）");
 			return;
 		}
 		switch (phase) {
@@ -91,16 +95,21 @@ final class GolemIronSkill extends Skill {
 				}
 				golem = findGolem();
 				if (golem == null) {
-					finish(gained() > 0 ? "鉄を" + gained() + "個集めた（ゴーレムがいなくなった）" : "アイアンゴーレムがいない", null);
+					if (gained() > 0) {
+						succeed("鉄を" + gained() + "個集めた（ゴーレムがいなくなった）", "アイアンゴーレムから鉄を" + gained() + "個集めた");
+					} else {
+						failWith("アイアンゴーレムがいない");
+					}
 					return;
 				}
 				if (Motion.scaffoldCount(o) < PILLAR_HEIGHT) {
-					finish("できない: ブロック不足（鉄 " + gained() + "）", null);
+					failWith("できない: ブロック不足（鉄 " + gained() + "）");
 					return;
 				}
 				setPhase(Phase.APPROACH);
 			}
 			case APPROACH -> approach();
+			case BACKOFF -> backOff();
 			case PILLAR -> pillarUp();
 			case FIGHT -> fight();
 			case COLLECT -> collect();
@@ -119,7 +128,7 @@ final class GolemIronSkill extends Skill {
 			nav.tick();
 			if (nav.failed() || phaseTicks > 900) {
 				nav.stop();
-				finish("ゴーレムに近づけない（鉄 " + gained() + "）", null);
+				failWith("ゴーレムに近づけない（鉄 " + gained() + "）");
 			}
 			return;
 		}
@@ -128,22 +137,53 @@ final class GolemIronSkill extends Skill {
 		if (o.onGround() && Combat.hit(o, cs, golem, false)) {
 			// 1発殴って敵対させる（念のためこちらを狙わせる）
 			golem.setTarget(o);
+			setPhase(Phase.BACKOFF);
+		}
+	}
+
+	/** 殴ったら、積む前にゴーレムから水平 BACKOFF_DIST 以上離れる。 */
+	private void backOff() {
+		if (!golem.isAlive()) {
+			setPhase(Phase.FIND);
+			return;
+		}
+		// 体と体の水平のすき間（中心の距離から、両方の幅の半分を引く）
+		double hd = SkillUtil.horiz(o.position(), golem.position()) - (golem.getBbWidth() + o.getBbWidth()) / 2.0;
+		Vec3 dir = Motion.safeAway(o, o.position().subtract(golem.position()));
+		boolean far = hd >= BACKOFF_DIST;
+		if ((far && o.onGround()) || (o.onGround() && (dir == null || phaseTicks > 100))) {
+			// 離れた（または離れる先が無い・時間切れなら、その場で積む）
+			Motion.halt(o);
 			baseY = Math.floor(o.getY() + 0.01);
 			pillar.reset();
 			setPhase(Phase.PILLAR);
+			return;
+		}
+		if (dir != null) {
+			Motion.face(o, golem.getEyePosition());
+			Vec3 to = o.position().add(dir.scale(4));
+			o.setSprinting(true);
+			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 		}
 	}
 
 	private void pillarUp() {
 		if (phaseTicks > 200) {
-			finish("柱を積めなかった（鉄 " + gained() + "）", null);
+			failWith("柱を積めなかった（鉄 " + gained() + "）");
 			return;
 		}
 		int r = pillar.tick(o, digger);
 		if (r == Motion.PILLAR_NO_BLOCK) {
-			finish("できない: ブロック不足（鉄 " + gained() + "）", null);
+			failWith("できない: ブロック不足（鉄 " + gained() + "）");
 		} else if (r == Motion.PILLAR_BLOCKED) {
-			finish("頭上が塞がっていて柱を積めない（鉄 " + gained() + "）", null);
+			failWith("頭上が塞がっていて柱を積めない（鉄 " + gained() + "）");
+		} else if (r == Motion.PILLAR_OCCUPIED) {
+			// ゴーレムが足元の升に重なっていて置けない: 地面にいれば少し離れて積み直す。柱の途中なら次の跳びで再試行
+			if (++occupied > 10) {
+				failWith("ゴーレムが重なって柱を積めない（鉄 " + gained() + "）");
+			} else if (pillar.built == 0) {
+				setPhase(Phase.BACKOFF);
+			}
 		} else if (r == Motion.PILLAR_STEP && pillar.built >= PILLAR_HEIGHT) {
 			setPhase(Phase.FIGHT);
 		}
@@ -172,7 +212,7 @@ final class GolemIronSkill extends Skill {
 			farTicks = 0;
 			Combat.hit(o, cs, golem, false);
 		} else if (++farTicks > 300) {
-			finish("ゴーレムが柱に来ない（鉄 " + gained() + "）", null);
+			failWith("ゴーレムが柱に来ない（鉄 " + gained() + "）");
 		}
 		if (golem.getTarget() == null && d < 12) {
 			golem.setTarget(o);
@@ -211,7 +251,7 @@ final class GolemIronSkill extends Skill {
 	}
 
 	private void done() {
-		finish("鉄インゴットを" + gained() + "個集めた（ゴーレム " + golems + "体）",
+		succeed("鉄インゴットを" + gained() + "個集めた（ゴーレム " + golems + "体）",
 				"アイアンゴーレムから鉄を" + gained() + "個集めた");
 	}
 

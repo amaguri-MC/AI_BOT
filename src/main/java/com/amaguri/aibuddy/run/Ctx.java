@@ -71,6 +71,11 @@ final class Ctx {
 		return logs() * 4 + planks() + sticks() / 2;
 	}
 
+	/** 柱・橋に使えるブロックの数（丸石・土・板材など。スキル側の Motion.scaffoldCount と同じ）。 */
+	int scaffold() {
+		return com.amaguri.aibuddy.skill.RunSkills.scaffoldCount(o);
+	}
+
 	int cobble() {
 		return tag(ItemTags.STONE_TOOL_MATERIALS);
 	}

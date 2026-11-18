@@ -442,10 +442,6 @@ public class AiBuddyGameTests {
 					}
 				}
 			}
-			if (now % 40 == 0) {
-				System.out.println("[nodigtest] t=" + now + " goal=" + m.autopilot().goalText() + " status=" + m.skills().status()
-						+ " rel=" + rel(h, m));
-			}
 			if (now >= 600) {
 				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(5, floor - 2, 4)).is(Blocks.IRON_ORE), "埋まった鉄鉱石を掘った");
 				h.succeed();
@@ -1167,10 +1163,6 @@ public class AiBuddyGameTests {
 			if (p.y >= floor + 1 + 2.7) {
 				st.elevated = true;
 			}
-			if (t % 40 == 0) {
-				System.out.println("[goleMtest] t=" + t + " rel=" + p + " hp=" + m.getHealth() + " golemHp=" + g.getHealth()
-						+ " iron=" + count(m, Items.IRON_INGOT) + " status=" + m.skills().status());
-			}
 			if (!m.skills().isBusy() && t > 20) {
 				String res = m.skills().lastResult();
 				h.assertTrue(m.isAlive() && st.elevated, "柱に登っていない/死んだ maxY=" + st.maxY + " res=" + res);
@@ -1236,9 +1228,6 @@ public class AiBuddyGameTests {
 						stones++;
 					}
 				}
-			}
-			if (h.getTick() % 60 == 0) {
-				System.out.println("[walltest] t=" + h.getTick() + " rel=" + rel(h, m) + " stones=" + stones + " status=" + m.skills().status());
 			}
 			h.assertTrue(stones == 2 * (WID - 2), "壁を掘った 残り " + stones);
 			if (rel(h, m).x > 23.5) {

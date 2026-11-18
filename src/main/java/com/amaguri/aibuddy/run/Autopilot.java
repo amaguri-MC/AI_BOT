@@ -62,6 +62,8 @@ public final class Autopilot {
 	private int unwatched;
 	private boolean ownSkill;
 	private Plan.Row lastRow;
+	/** 掘る許可を Autopilot 自身が出しているか（無効にした時に自分の分だけ取り消す） */
+	private boolean digGranted;
 	private int rowTicks;
 	private long now;
 	private final Map<String, Integer> fails = new HashMap<>();
@@ -91,6 +93,11 @@ public final class Autopilot {
 			return;
 		}
 		now++;
+		// 掘る許可は SkillRunner.allowDig が唯一の源。ネザー要塞・マグマだまりを探す段階（BLAZE/PORTAL）以外は、
+		// 無効・一時停止・避難・早送り・水たまりで早めに戻る前にも必ず false に戻す（自分が許した分だけ。テストが直接許した分は残す）
+		if (!digStage(stage) || !enabled) {
+			revokeDig();
+		}
 		if (!enabled || o.isPuddle()) {
 			if (ff.active()) {
 				ff.stop(false);
@@ -131,7 +138,12 @@ public final class Autopilot {
 		SkillRunner r = o.skills();
 		Ctx c = new Ctx(o, this);
 		// 穴を掘ってよいのは、ネザー要塞を探す（BLAZE）とマグマだまりを探す（PORTAL）段階だけ
-		RunSkills.setDigAllowed(o, digStage(stage));
+		if (digStage(stage)) {
+			digGranted = true;
+			RunSkills.setDigAllowed(o, true);
+		} else {
+			revokeDig();
+		}
 		if (now % 20 == 0 || !r.isBusy()) {
 			if (advance(c) && ownSkill && r.isBusy()) {
 				// 段階が終わったのに前の段階の行動を続けない
@@ -151,7 +163,7 @@ public final class Autopilot {
 		}
 		if (ownSkill) {
 			ownSkill = false;
-			afterSkill(c, r.lastResult());
+			afterSkill(c, r.lastResult(), r.lastOk());
 		}
 		if (++idle >= IDLE_TO_ACT) {
 			decide(c);
@@ -358,6 +370,14 @@ public final class Autopilot {
 	// ================= 内部 =================
 
 	/** トンネル・下掘りを許す段階。 */
+	/** Autopilot が許した掘る許可を取り消す。 */
+	private void revokeDig() {
+		if (digGranted || RunSkills.digAllowed(o) && enabled) {
+			RunSkills.setDigAllowed(o, false);
+		}
+		digGranted = false;
+	}
+
 	static boolean digStage(Stage s) {
 		return s == Stage.PORTAL || s == Stage.BLAZE;
 	}
@@ -528,12 +548,14 @@ public final class Autopilot {
 		r.startAuto("emote", Plan.j("kind", "jump"));
 	}
 
-	private void afterSkill(Ctx c, String res) {
+	private void afterSkill(Ctx c, String res, Boolean ok) {
 		if (lastRow == null) {
 			return;
 		}
 		String key = lastRow.key();
-		if (isFailure(res)) {
+		// 成否はスキルが明示していればそれを使う（文の言い回しに頼らない）。明示が無いスキルだけ文で判断
+		boolean failed = ok != null ? !ok : isFailure(res);
+		if (failed) {
 			fail(key);
 			if (key.equals("hunt") && stage == Stage.FOOD) {
 				foodFails++;
@@ -579,7 +601,9 @@ public final class Autopilot {
 		if (key.equals("golem") && n >= 3) {
 			flags.add("golem_given_up"); // 3回だめならゴーレムはあきらめて次の手へ
 		}
-		coolUntil.put(key, now + Math.min(20L * 60, 100L * n));
+		// ゴーレムは1回ごとに柱のブロックを使うので、失敗したら長めに間を置く（1分×回数、最大5分）
+		long cool = key.equals("golem") ? Math.min(20L * 300, 20L * 60 * n) : Math.min(20L * 60, 100L * n);
+		coolUntil.put(key, now + cool);
 	}
 
 	/** 同じ次元で追跡距離（160）内にプレイヤー（スペクテイターも含む）がいれば「見られている」。 */

@@ -675,23 +675,39 @@ final class Motion {
 	}
 
 	/** 足場を1個置く。素材が無い・置けない場所なら false。 */
+	static final int PLACE_OK = 0;
+	/** 足場にするブロックを持っていない */
+	static final int PLACE_NO_ITEM = 1;
+	/** 何か（mob・自分以外の体）がその升に重なっている: 少し動けば置ける */
+	static final int PLACE_OCCUPIED = 2;
+	/** 升が埋まっている・読み込まれていない */
+	static final int PLACE_BLOCKED = 3;
+
 	static boolean placeScaffold(FakeMember o, BlockPos p) {
+		return tryPlaceScaffold(o, p) == PLACE_OK;
+	}
+
+	/** 足場を置く。置けなかった理由を返す（PLACE_*）。 */
+	static int tryPlaceScaffold(FakeMember o, BlockPos p) {
 		ServerLevel l = SkillUtil.level(o);
 		if (!l.hasChunkAt(p) || !l.getBlockState(p).canBeReplaced()) {
-			return false;
+			return PLACE_BLOCKED;
+		}
+		if (!hasScaffold(o)) {
+			return PLACE_NO_ITEM;
 		}
 		if (!l.getEntities(o, new net.minecraft.world.phys.AABB(p).deflate(0.05),
 				e -> e != o && e.blocksBuilding).isEmpty()) {
-			return false;
+			return PLACE_OCCUPIED;
 		}
 		BlockState st = takeScaffold(o);
 		if (st == null) {
-			return false;
+			return PLACE_NO_ITEM;
 		}
 		l.setBlock(p, st, 3);
 		l.playSound(null, p, st.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 0.8f, 1.0f);
 		SkillUtil.swing(o);
-		return true;
+		return PLACE_OK;
 	}
 
 	// ---- 柱 ----
@@ -700,6 +716,8 @@ final class Motion {
 	static final int PILLAR_STEP = 1;
 	static final int PILLAR_NO_BLOCK = 2;
 	static final int PILLAR_BLOCKED = 3;
+	/** 足元の升に何か（ゴーレム等）が重なっていて置けない: 少し動いてから積み直す */
+	static final int PILLAR_OCCUPIED = 4;
 
 	/** 真上に積む（ジャンプ→頂点で足元に置く）。頭上に石があれば digger で掘ってから。 */
 	static final class Pillar {
@@ -760,9 +778,18 @@ final class Motion {
 				o.getJumpControl().jump();
 			} else if (cell != null && !placed && o.getY() >= cell.getY() + 1.0 && l.getBlockState(cell).canBeReplaced()) {
 				// 跳んで足が cell より1段上がった時だけ置く
-				if (!placeScaffold(o, cell)) {
+				int pr = tryPlaceScaffold(o, cell);
+				if (pr == PLACE_NO_ITEM) {
 					cell = null;
 					return PILLAR_NO_BLOCK;
+				}
+				if (pr == PLACE_OCCUPIED) {
+					cell = null;
+					return PILLAR_OCCUPIED;
+				}
+				if (pr != PLACE_OK) {
+					cell = null; // 升が埋まった等: 着地してから跳び直す（段は数えない）
+					return PILLAR_WORKING;
 				}
 				placed = true;
 			}

@@ -8,6 +8,9 @@ public final class Slur {
 	private static final String VOICED = "がぎぐげござじずぜぞだぢづでどばびぶべぼガギグゲゴザジズゼゾダヂヅデドバビブベボ";
 	private static final String[] TAILS = {"…", "……", "…ぁ", "…う", "…ぁぁ"};
 
+	/** 水たまりの台詞の最大文字数（「…」込み） */
+	static final int FRAGMENT_MAX = 20;
+
 	private Slur() {
 	}
 
@@ -51,7 +54,7 @@ public final class Slur {
 	}
 
 	/**
-	 * 水たまり用: 15字以内に切り、文字の間に「…」を挟んで途切れ途切れにする。
+	 * 水たまり用: 元の文を15字以内に切り、文字の間に「…」を挟んで途切れ途切れにする。挟んだ後の全体は「…」込みで最大 FRAGMENT_MAX 字。
 	 * すでに「…」で区切られていれば、そのまま（二重に崩しすぎない）。崩し(apply)はこの後に say 側でかかる。
 	 */
 	public static String fragment(String text, RandomSource r) {
@@ -64,7 +67,7 @@ public final class Slur {
 		}
 		long dots = t.chars().filter(ch -> ch == '…').count();
 		if (dots >= 2 || t.length() < 2) {
-			return t;
+			return t; // 15字以内なので FRAGMENT_MAX に収まる
 		}
 		StringBuilder sb = new StringBuilder();
 		for (int i = 0; i < t.length(); i++) {
@@ -78,6 +81,14 @@ public final class Slur {
 			// 短い返事でも必ず途切れさせる（真ん中と最後に「…」）
 			int mid = Math.max(1, out.length() / 2);
 			out = out.substring(0, mid) + "…" + out.substring(mid) + "…";
+		}
+		if (out.length() > FRAGMENT_MAX) {
+			// 「…」を挟んだ後の全体で約20字に収める（最後は「…」で途切れさせる）
+			String cut = out.substring(0, FRAGMENT_MAX - 1);
+			while (cut.endsWith("…")) {
+				cut = cut.substring(0, cut.length() - 1);
+			}
+			out = cut + "…";
 		}
 		return out;
 	}

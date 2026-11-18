@@ -142,9 +142,9 @@ final class Plan {
 				// 海が遠ければ村（鍛冶屋のチェスト・パン）
 				t.add(once("village_find", "village_tried", c -> c.overworld(), "find_structure", c -> j("type", "village", "radius", 12), 20 * 240, "村を探す"));
 				t.add(once("village_loot", "village_looted", c -> near(c, "village", 64), "loot_chests", c -> j("radius", 40), 20 * 120, "村のチェスト"));
-				// 村のアイアンゴーレム: 柱用の丸石3を持ってから、殴る→足元に3マス積む→上から倒して鉄を拾う（golem_iron は別担当のスキル）
-				t.add(row("pillar_blocks", c -> near(c, "village", 64) && ironShort(c) && c.cobble() < 3 && !c.ap.flag("golem_given_up"), "mine", c -> j("block", "stone", "count", 3 - c.cobble()), 20 * 60, "柱用の丸石"));
-				t.add(row("golem", c -> near(c, "village", 64) && ironShort(c) && c.cobble() >= 3 && !c.ap.flag("golem_given_up"), "golem_iron", c -> j("count", Math.max(1, ironNeed(c) - c.ingots())), 20 * 120, "ゴーレムから鉄"));
+				// 村のアイアンゴーレム: 柱用のブロック3（丸石・土・板材など、GolemIronSkill と同じ数え方）を持ってから、殴る→足元に3マス積む→上から倒して鉄を拾う（golem_iron は別担当のスキル）
+				t.add(row("pillar_blocks", c -> near(c, "village", 64) && ironShort(c) && c.scaffold() < 3 && !c.ap.flag("golem_given_up"), "mine", c -> j("block", "stone", "count", 3 - c.scaffold()), 20 * 60, "柱用の丸石"));
+				t.add(row("golem", c -> near(c, "village", 64) && ironShort(c) && c.scaffold() >= 3 && !c.ap.flag("golem_given_up"), "golem_iron", c -> j("count", Math.max(1, ironNeed(c) - c.ingots())), 20 * 120, "ゴーレムから鉄"));
 				// 廃ポータル（チェストに火打石・黒曜石・金）。溶岩だまりはゲートの段階で探す
 				t.add(once("ruin_find", "ruin_tried", c -> c.overworld(), "find_structure", c -> j("type", "ruined_portal", "radius", 8), 20 * 120, "廃ポータルを探す"));
 				t.add(once("ruin_loot", "ruin_looted", c -> near(c, RunSkills.MARK_RUIN, 20), "loot_chests", c -> j("radius", 16), 20 * 60, "廃ポータルのチェスト"));

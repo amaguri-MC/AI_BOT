@@ -63,28 +63,22 @@ public final class RunSkills {
 
 	// ---- 穴を掘ってよいか（段階ごとの方針。Autopilot が毎tick決める） ----
 
-	private static final java.util.Map<FakeMember, Boolean> DIG = new java.util.WeakHashMap<>();
-
 	/**
-	 * トンネル・下掘りを許すか。Autopilot はネザー要塞・マグマだまりを探す段階だけ true にする。
-	 * MineSkill の対象選び（立って届く物だけにするか）と、Nav の allowDig が読む。
+	 * トンネル・下掘りを許すか。唯一の源は SkillRunner.allowDig（既定 false）。Autopilot はネザー要塞・マグマだまりを
+	 * 探す段階だけ true にする。MineSkill の対象選び（立って届く物だけにするか）と Nav が読む。
 	 */
 	public static void setDigAllowed(FakeMember o, boolean on) {
-		Boolean prev = DIG.put(o, on);
-		if (prev == null || prev != on) {
-			applyToRunner(o.skills(), on);
-		}
+		o.skills().setAllowDig(on);
 	}
 
-	/** Nav の掘る許可（SkillRunner.setAllowDig）を段階に合わせて切り替える。 */
-	private static void applyToRunner(SkillRunner r, boolean on) {
-		r.setAllowDig(on);
-	}
-
-	/** 方針が決まっていない（自動進行を使っていない）ときは今までどおり掘ってよい。 */
+	/** 掘ってよいか（SkillRunner.allowDig を読むだけ）。 */
 	public static boolean digAllowed(FakeMember o) {
-		Boolean b = DIG.get(o);
-		return b == null || b;
+		return o.skills().allowDig();
+	}
+
+	/** 柱・橋に使えるブロックの数（Plan の行の条件をスキル側の数え方と揃える）。 */
+	public static int scaffoldCount(FakeMember o) {
+		return Motion.scaffoldCount(o);
 	}
 
 	/**

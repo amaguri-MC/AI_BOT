@@ -75,15 +75,8 @@ final class Nav {
 	private int bridged;
 
 
-	/** 地形を掘って進んでよいか（既定 false）。SkillRunner.setAllowDig で変える。 */
+	/** 地形を掘って進んでよいか（SkillRunner.allowDig を読む。既定 false）。 */
 	private final java.util.function.BooleanSupplier allowDig;
-	/** このスキルだけ掘ってよい（鉱石・要塞を探すスキル用）。 */
-	private boolean ownAllowDig;
-
-	void setAllowDig(boolean on) {
-		this.ownAllowDig = on;
-	}
-
 	Nav(FakeMember o, Digger digger) {
 		this(o, digger, () -> false);
 	}
@@ -547,16 +540,6 @@ final class Nav {
 			return;
 		}
 		// 5秒詰まったら 回り込み → 柱 → 橋 の順。掘って進むのは allowDig のときだけ（最後）
-		if (ownAllowDig) {
-			// 鉱石・要塞へ掘り進むスキルは従来どおり 掘る → 柱 → 橋 → 回り込み
-			switch (stage++ % 4) {
-				case 0 -> startDig();
-				case 1 -> startPillar();
-				case 2 -> startBridge();
-				default -> startDetour();
-			}
-			return;
-		}
 		boolean dig = allowDig.getAsBoolean();
 		int s = stage++ % (dig ? 4 : 3);
 		switch (s) {

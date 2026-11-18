@@ -14,6 +14,8 @@ abstract class Skill {
 	String result;
 	/** 終了時に postEvent する文（null なら報告しない） */
 	String event;
+	/** 成否をスキルが明示したか: TRUE=成功 / FALSE=失敗 / null=明示なし（Autopilot は結果の文で判断） */
+	Boolean ok;
 
 	Skill(FakeMember o, SkillRunner runner) {
 		this.o = o;
@@ -35,6 +37,18 @@ abstract class Skill {
 		nav.stop();
 		digger.cancel();
 		o.setShiftKeyDown(false);
+	}
+
+	/** 成功として終える（Autopilot は失敗回数を消す）。 */
+	protected void succeed(String result, String event) {
+		this.ok = Boolean.TRUE;
+		finish(result, event);
+	}
+
+	/** 失敗として終える（Autopilot は失敗回数を数え、クールダウンを置く）。 */
+	protected void failWith(String result) {
+		this.ok = Boolean.FALSE;
+		finish(result, null);
 	}
 
 	protected void finish(String result, String event) {

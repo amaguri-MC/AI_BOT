@@ -32,6 +32,8 @@ public final class SkillRunner {
 	private final AutoReporter reporter;
 	private Skill current;
 	private String lastResult = "";
+	/** 直前のスキルの成否（スキルが明示した時だけ。null=明示なし） */
+	private Boolean lastOk;
 	private ItemStack savedHand;
 	private boolean handHeld;
 	int pickedUp;
@@ -141,6 +143,7 @@ public final class SkillRunner {
 			return err.startsWith("できない") ? err : "できない: " + err;
 		}
 		current = next;
+		lastOk = null;
 		return "開始した: " + next.status();
 	}
 
@@ -200,6 +203,7 @@ public final class SkillRunner {
 					Skill s = current;
 					current = null;
 					lastResult = s.result == null ? "" : s.result;
+					lastOk = s.ok;
 					s.onStop();
 					releaseHand();
 					if (s.event != null) {
@@ -210,6 +214,7 @@ public final class SkillRunner {
 		} catch (RuntimeException e) {
 			LOGGER.warn("skill tick failed", e);
 			lastResult = "失敗: 内部エラー";
+			lastOk = Boolean.FALSE;
 			stopCurrentQuietly();
 		}
 	}
@@ -217,12 +222,13 @@ public final class SkillRunner {
 	/** 次元移動で作り直されたとき、前の個体の報告済み記録を引き継ぐ。 */
 	public synchronized void inheritFrom(SkillRunner prev) {
 		reporter.inheritFrom(prev.reporter);
-		allowDig = prev.allowDig;
+		// 掘る許可は引き継がない（既定 false）。新しい体の Autopilot が段階を見て毎tick決め直す
 	}
 
 	public synchronized void stop() {
 		stopCurrentQuietly();
 		lastResult = "止めた";
+		lastOk = null;
 	}
 
 	private void stopCurrentQuietly() {
@@ -242,6 +248,11 @@ public final class SkillRunner {
 	/** 直前に終わったスキルの結果文（「できない: ...」「ダイヤを3個掘った」など）。 */
 	public synchronized String lastResult() {
 		return lastResult;
+	}
+
+	/** 直前のスキルが明示した成否。TRUE=成功 / FALSE=失敗 / null=明示なし（結果の文で判断する）。 */
+	public synchronized Boolean lastOk() {
+		return lastOk;
 	}
 
 	/** 今のスキルの名前（クラス名。Autopilot の見張り用）。何もしていなければ空。 */
