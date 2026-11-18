@@ -31,6 +31,8 @@ public class AiBuddyGameTests {
 	private static final int STAND = FLOOR + 1;
 	/** 速度テスト専用の高さ（他テストの舞台と重ならない） */
 	private static final int SPEED_FLOOR = 60;
+	/** 穴を掘らないテスト専用の高さ */
+	private static final int NODIG_FLOOR = 260;
 	/** スタート待ちテスト専用の高さ */
 	private static final int START_FLOOR = 100;
 	/** 寝るテスト専用の高さ（隣のテストの舞台がベッドを上書きしないように） */
@@ -390,6 +392,50 @@ public class AiBuddyGameTests {
 				h.fail("メンバーが死んだ（status=" + m.skills().status() + "）");
 			}
 			if (hasPlacedTable(h, stand)) {
+				h.succeed();
+			}
+		});
+	}
+
+	// ---- (6) 村が無く、露出した鉄も無いときに穴を掘り始めない ----
+
+	@GameTest(maxTicks = 700)
+	public void lootStageDoesNotDigForBuriedIron(GameTestHelper h) {
+		final int floor = NODIG_FLOOR;
+		buildArena(h, floor);
+		// 床の下は石3段。鉄鉱石は床の下に埋める（空気に面していない＝見えていない）
+		for (int x = 0; x < LEN; x++) {
+			for (int z = 0; z < WID; z++) {
+				for (int y = 1; y <= 3; y++) {
+					h.setBlock(x, floor - y, z, Blocks.STONE);
+				}
+			}
+		}
+		h.setBlock(5, floor - 2, 4, Blocks.IRON_ORE);
+		h.setBlock(9, floor - 2, 4, Blocks.IRON_ORE);
+		FakeMember m = summon(h, 2.5f, 4.5f, true, floor);
+		m.autopilot().setFastForwardAllowed(false);
+		m.autopilot().start();
+		m.autopilot().skipTo(com.amaguri.aibuddy.run.Stage.LOOT); // 石の道具まで持った状態で、鉄集めの段階から
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			for (int x = 0; x < LEN; x++) {
+				for (int z = 0; z < WID; z++) {
+					for (int y = 1; y <= 3; y++) {
+						var p = new net.minecraft.core.BlockPos(x, floor - y, z);
+						if (h.getBlockState(p).isAir()) {
+							h.fail("床の下を掘った（" + x + "," + (floor - y) + "," + z + "） t=" + now + " status=" + m.skills().status()
+									+ " goal=" + m.autopilot().goalText());
+						}
+					}
+				}
+			}
+			if (now % 40 == 0) {
+				System.out.println("[nodigtest] t=" + now + " goal=" + m.autopilot().goalText() + " status=" + m.skills().status()
+						+ " rel=" + rel(h, m));
+			}
+			if (now >= 600) {
+				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(5, floor - 2, 4)).is(Blocks.IRON_ORE), "埋まった鉄鉱石を掘った");
 				h.succeed();
 			}
 		});

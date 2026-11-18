@@ -201,7 +201,7 @@ final class Ctx {
 		return o.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(t)) <= r;
 	}
 
-	/** 半径 r に「見えている」（空気に面した）鉄鉱石があるか。 */
+	/** 半径 r に「見えている」鉄鉱石（空気に面し、立った位置から届く）があるか。 */
 	boolean exposedIron(int r) {
 		BlockPos c = o.blockPosition();
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
@@ -216,10 +216,9 @@ final class Ctx {
 					if (!st.is(net.minecraft.world.level.block.Blocks.IRON_ORE) && !st.is(net.minecraft.world.level.block.Blocks.DEEPSLATE_IRON_ORE)) {
 						continue;
 					}
-					for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
-						if (l.getBlockState(m.relative(d)).isAir()) {
-							return true;
-						}
+					// 空気に接していて、立った位置から届く物だけ（掘り進まないと届かない物は数えない）
+					if (com.amaguri.aibuddy.skill.RunSkills.reachableFromStand(l, m.immutable())) {
+						return true;
 					}
 				}
 			}

@@ -61,6 +61,64 @@ public final class RunSkills {
 	private RunSkills() {
 	}
 
+	// ---- 穴を掘ってよいか（段階ごとの方針。Autopilot が毎tick決める） ----
+
+	private static final java.util.Map<FakeMember, Boolean> DIG = new java.util.WeakHashMap<>();
+
+	/**
+	 * トンネル・下掘りを許すか。Autopilot はネザー要塞・マグマだまりを探す段階だけ true にする。
+	 * MineSkill の対象選び（立って届く物だけにするか）と、Nav の allowDig が読む。
+	 */
+	public static void setDigAllowed(FakeMember o, boolean on) {
+		DIG.put(o, on);
+	}
+
+	/** 方針が決まっていない（自動進行を使っていない）ときは今までどおり掘ってよい。 */
+	public static boolean digAllowed(FakeMember o) {
+		Boolean b = DIG.get(o);
+		return b == null || b;
+	}
+
+	/**
+	 * 立った位置から届くか: 空気に面していて、近く（横3・下4〜上1）に足場（下が固く、足と頭が空き）があり、
+	 * そこから目の高さで4.5ブロック以内。掘り進まないと届かない物は false。
+	 */
+	public static boolean reachableFromStand(ServerLevel l, BlockPos p) {
+		boolean air = false;
+		for (Direction d : Direction.values()) {
+			if (l.getBlockState(p.relative(d)).isAir()) {
+				air = true;
+				break;
+			}
+		}
+		if (!air) {
+			return false;
+		}
+		Vec3 c = Vec3.atCenterOf(p);
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		for (int dx = -3; dx <= 3; dx++) {
+			for (int dz = -3; dz <= 3; dz++) {
+				for (int dy = -4; dy <= 1; dy++) {
+					m.set(p.getX() + dx, p.getY() + dy, p.getZ() + dz);
+					if (m.equals(p) || !l.hasChunkAt(m)) {
+						continue;
+					}
+					BlockState below = l.getBlockState(m.below());
+					BlockState feet = l.getBlockState(m);
+					BlockState head = l.getBlockState(m.above());
+					if (!below.blocksMotion() || feet.blocksMotion() || head.blocksMotion()
+							|| !feet.getFluidState().isEmpty() || !head.getFluidState().isEmpty()) {
+						continue;
+					}
+					if (new Vec3(m.getX() + 0.5, m.getY() + 1.62, m.getZ() + 0.5).distanceToSqr(c) <= 4.5 * 4.5) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	static Skill create(String name, FakeMember o, SkillRunner r, JsonObject in) {
 		if (name == null) {
 			return null;

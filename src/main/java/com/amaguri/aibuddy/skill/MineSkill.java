@@ -242,6 +242,7 @@ final class MineSkill extends Skill {
 
 	private BlockPos scan(int r) {
 		ServerLevel l = SkillUtil.level(o);
+		boolean digOk = RunSkills.digAllowed(o);
 		BlockPos c = o.blockPosition();
 		BlockPos best = null;
 		double bestScore = Double.MAX_VALUE;
@@ -264,6 +265,10 @@ final class MineSkill extends Skill {
 						continue;
 					}
 					if (SkillUtil.nearLava(l, p)) {
+						continue;
+					}
+					// 穴を掘らない段階では、立った位置から届く露出したブロックだけを選ぶ（掘り進まない）
+					if (!digOk && !RunSkills.reachableFromStand(l, p)) {
 						continue;
 					}
 					boolean exposed = false;
