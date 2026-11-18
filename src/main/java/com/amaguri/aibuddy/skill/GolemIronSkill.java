@@ -11,7 +11,7 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * アイアンゴーレムから鉄インゴットを集める。
- * 近づいて1発殴って敵対させ、足元に3段積んで（ゴーレムは届かない）柱の上から倒し、降りて鉄を拾う。
+ * そばまで行って足元に3段積み（ゴーレムは届かない）、柱の上から殴って敵対させて倒し、降りて鉄を拾う。
  * 村人は殴らない。この間の Combat / Evade はゴーレムを脅威にしない（Combat.isThreat）。
  */
 final class GolemIronSkill extends Skill {
@@ -19,12 +19,9 @@ final class GolemIronSkill extends Skill {
 
 	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, COLLECT }
 
-	/**
-	 * 殴ったあと、ゴーレムから水平にこれだけ（体と体のすき間で）離れてから積む。升に重なる・打ち上げられるのを防ぎ、
-	 * ゴーレム（毎秒約2.5ブロック）が着く前に3段（約2秒）積み終えて、手の届かない高さにいるため。最低でも2.5
-	 */
-	private static final double BACKOFF_DIST = 6.0;
-	private static final double BACKOFF_MIN = 2.5;
+	/** 柱を積む場所: ゴーレムとの体のすき間がこの範囲（重ならず、柱の上から手が届く） */
+	private static final double PILLAR_GAP_MIN = 1.0;
+	private static final double PILLAR_GAP_MAX = 1.8;
 
 	private final int wanted;
 	private final Combat.State cs;
@@ -120,15 +117,25 @@ final class GolemIronSkill extends Skill {
 		}
 	}
 
+	/** 体と体の水平のすき間（中心の距離から、両方の幅の半分を引く）。 */
+	private double gap() {
+		return SkillUtil.horiz(o.position(), golem.position()) - (golem.getBbWidth() + o.getBbWidth()) / 2.0;
+	}
+
+	/**
+	 * ゴーレムのそば（すき間 PILLAR_GAP_MIN〜PILLAR_GAP_MAX）まで行き、まだ殴らずに3段積む。
+	 * 殴ってから積むと、追ってきたゴーレム（歩きと同じ速さ）に積む途中で打ち上げられる・升に重なるので、
+	 * 敵対させるのは柱の上（手が届かない高さ）から最初の1発で。
+	 */
 	private void approach() {
 		if (!golem.isAlive()) {
 			setPhase(Phase.FIND);
 			return;
 		}
 		Combat.equipBest(o, cs);
-		double d = Combat.distTo(o, golem);
-		if (d > Combat.REACH - 0.3) {
-			nav.go(golem.position(), 2.0, 1.0);
+		double g = gap();
+		if (g > PILLAR_GAP_MAX) {
+			nav.go(golem.position(), PILLAR_GAP_MAX + 0.6, 1.0);
 			nav.tick();
 			if (nav.failed() || phaseTicks > 900) {
 				nav.stop();
@@ -137,38 +144,37 @@ final class GolemIronSkill extends Skill {
 			return;
 		}
 		nav.stop();
-		Motion.face(o, golem.getEyePosition());
-		if (o.onGround() && Combat.hit(o, cs, golem, false)) {
-			// 1発殴って敵対させる（念のためこちらを狙わせる）
-			golem.setTarget(o);
-			setPhase(Phase.BACKOFF);
+		if (g < PILLAR_GAP_MIN) {
+			setPhase(Phase.BACKOFF); // 近すぎる（升に重なる）: 少し離れてから積む
+			return;
+		}
+		if (o.onGround()) {
+			startPillar();
 		}
 	}
 
-	/** 殴ったら、積む前にゴーレムから水平 BACKOFF_DIST 以上離れる。 */
+	private void startPillar() {
+		Motion.halt(o);
+		baseY = Math.floor(o.getY() + 0.01);
+		pillar.reset();
+		setPhase(Phase.PILLAR);
+	}
+
+	/** ゴーレムが近すぎて足元の升に重なる時: 水平のすき間 PILLAR_GAP_MIN 以上まで少し離れてから積む。 */
 	private void backOff() {
 		if (!golem.isAlive()) {
 			setPhase(Phase.FIND);
 			return;
 		}
-		// 体と体の水平のすき間（中心の距離から、両方の幅の半分を引く）
-		double hd = SkillUtil.horiz(o.position(), golem.position()) - (golem.getBbWidth() + o.getBbWidth()) / 2.0;
 		Vec3 dir = Motion.safeAway(o, o.position().subtract(golem.position()));
-		boolean far = hd >= BACKOFF_DIST;
-		boolean enough = hd >= BACKOFF_MIN;
-		if ((far && o.onGround()) || (o.onGround() && enough && (dir == null || phaseTicks > 80)) || (o.onGround() && phaseTicks > 160)) {
-			// 離れた（離れる先が無い・時間切れなら、最低限離れていればその場で積む）
-			Motion.halt(o);
-			baseY = Math.floor(o.getY() + 0.01);
-			pillar.reset();
-			setPhase(Phase.PILLAR);
+		if (o.onGround() && (gap() >= PILLAR_GAP_MIN + 0.3 || dir == null || phaseTicks > 60)) {
+			startPillar();
 			return;
 		}
 		if (dir != null) {
 			Motion.face(o, golem.getEyePosition());
-			Vec3 to = o.position().add(dir.scale(4));
-			o.setSprinting(true);
-			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
+			Vec3 to = o.position().add(dir.scale(3));
+			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, false, 1.0));
 		}
 	}
 
