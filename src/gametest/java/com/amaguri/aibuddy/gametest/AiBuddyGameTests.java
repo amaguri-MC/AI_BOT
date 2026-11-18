@@ -1397,9 +1397,66 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (14) クリーパー: 素手は離れる・膨らんだら7ブロック以上・石の剣なら倒す ----
+
+	private static final int CREEP1_FLOOR = 10;
+	private static final int CREEP2_FLOOR = 70;
+	private static final int CREEP3_FLOOR = 90;
+
+	@GameTest(maxTicks = 200)
+	public void bareHandedKeepsAwayFromApproachingCreeper(GameTestHelper h) {
+		final int floor = CREEP1_FLOOR;
+		buildHall(h, floor, 60, 8);
+		FakeMember m = summon(h, 14.5f, 4.5f, false, floor);
+		var c = h.spawn(net.minecraft.world.entity.EntityTypes.CREEPER, 6.5f, (float) (floor + 1), 4.5f); // 後ろから来る
+		var st = new Object() {
+			double min = 99;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (c.isAlive()) {
+				c.setTarget(m);
+			}
+			st.min = Math.min(st.min, m.distanceTo(c));
+			if (t % 20 == 0) {
+				System.out.println("[creep1] t=" + t + " dist=" + m.distanceTo(c) + " hp=" + m.getHealth() + " rel=" + rel(h, m));
+			}
+			h.assertTrue(m.getHealth() >= m.getMaxHealth() - 0.01 && m.isAlive(), "クリーパーに爆破された/傷ついた hp=" + m.getHealth());
+			if (t >= 120) {
+				h.assertTrue(st.min >= 3.2, "近づかれすぎた 最小距離 " + st.min);
+				h.succeed();
+			}
+		});
+	}
+
+	@GameTest(maxTicks = 120)
+	public void runsSevenBlocksWhenCreeperStartsSwelling(GameTestHelper h) {
+		final int floor = CREEP2_FLOOR;
+		buildHall(h, floor, 50, 8);
+		FakeMember m = summon(h, 25.5f, 4.5f, false, floor);
+		var c = h.spawn(net.minecraft.world.entity.EntityTypes.CREEPER, 22.5f, (float) (floor + 1), 4.5f);
+		c.setTarget(m);
+		c.ignite(); // 導火線に火がついた（30tickで爆発）
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (t % 5 == 0 && t <= 40) {
+				System.out.println("[creep2] t=" + t + " dist=" + m.distanceTo(c) + " hp=" + m.getHealth());
+			}
+			if (t == 26) {
+				h.assertTrue(m.distanceTo(c) >= 7.0, "爆発前に7ブロック離れていない 距離 " + m.distanceTo(c));
+			}
+			if (t == 50) {
+				h.assertTrue(m.getHealth() >= m.getMaxHealth() - 0.01 && m.isAlive(), "爆発に巻き込まれた hp=" + m.getHealth());
+				h.succeed();
+			}
+		});
+	}
+
+
 	private static void placeBed(GameTestHelper h, net.minecraft.core.BlockPos headRel) {
 		var bed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState().setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST);
 		h.setBlock(headRel.west(), bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
 		h.setBlock(headRel, bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
 	}
+
 }

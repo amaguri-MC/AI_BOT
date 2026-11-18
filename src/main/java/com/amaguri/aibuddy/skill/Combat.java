@@ -71,6 +71,7 @@ final class Combat {
 		/** この tickCount までは避難を始めない（60秒待ったあとは慎重に進む） */
 		int noFleeUntil;
 		boolean backingOff;
+		boolean engage;
 		int creeperCd;
 		int backoffTicks;
 		Vec3 backoffFrom = Vec3.ZERO;
@@ -116,6 +117,17 @@ final class Combat {
 			}
 			return;
 		}
+		// クリーパーは最優先の危険。16ブロック以内に見えたら、進行中のスキルより先に距離を保つ。
+		// 7ブロック以内・膨らみ始めは走って離れる。石以上の剣/斧で単体なら、膨らむ前に近づいて倒す
+		Creeper creeper = nearestCreeper(o, l);
+		if (creeper != null && !o.skills().status().contains("クリーパー")) {
+			if (creeperTick(o, l, st, creeper, aggr)) {
+				return;
+			}
+		} else {
+			st.backingOff = false;
+			st.engage = false;
+		}
 		if (o.tickCount >= st.noFleeUntil && shouldFlee(o, l, aggr, purposeful, day)) {
 			st.fighting = false;
 			lowerShield(o, st);
@@ -125,36 +137,6 @@ final class Combat {
 			}
 			// 逃げ場が無く即終了: 避難せず、そのまま通常の戦いに進む（20秒は再避難しない）
 			st.noFleeUntil = o.tickCount + 400;
-		}
-		// クリーパーは殴らない。近づかれたら離れる。ただし1回あたり最大6ブロック・40tick、そのあと4秒は後退しない（往復しない）。
-		// 後退先は床があり落差2以内・溶岩でない向きだけ
-		if (st.creeperCd > 0) {
-			st.creeperCd--;
-		}
-		Creeper creeper = st.creeperCd > 0 ? null : nearestCreeper(o, l);
-		if (creeper != null && !purposeful) {
-			if (!st.backingOff) {
-				st.backingOff = true;
-				st.backoffFrom = o.position();
-				st.backoffTicks = 0;
-			}
-			st.backoffTicks++;
-			Vec3 away = o.position().subtract(creeper.position());
-			Vec3 dir = Motion.safeAway(o, away);
-			double moved = SkillUtil.horiz(o.position(), st.backoffFrom);
-			if (dir == null || moved >= 6.0 || st.backoffTicks > 40) {
-				st.backingOff = false;
-				st.creeperCd = 80;
-			} else {
-				st.calm = 0;
-				Motion.face(o, creeper.getEyePosition());
-				o.setSprinting(true);
-				Vec3 to = o.position().add(dir.scale(4));
-				o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
-				return;
-			}
-		} else {
-			st.backingOff = false;
 		}
 		// 敵がいる時に致命的な縁（溶岩・火・10段以上の落下）の約1.5ブロック以内に立っていたら、内側へ下がる（押されて落ちない）。
 		// クリーパー・避難の判断のあと。1回は最大20tick、そのあと3秒は下がらない（戦えなくならない・往復しない）
@@ -222,12 +204,75 @@ final class Combat {
 		return out;
 	}
 
+	/** 石以上の剣・斧を持っているか（素手・木・金は逃げる側）。 */
+	private static boolean strongWeapon(FakeMember o) {
+		ItemStack w = Inv.bestWeapon(o);
+		if (w.isEmpty()) {
+			return false;
+		}
+		String p = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(w.getItem()).getPath();
+		return (p.startsWith("stone_") || p.startsWith("iron_") || p.startsWith("diamond_") || p.startsWith("netherite_"))
+				&& (p.endsWith("_sword") || p.endsWith("_axe"));
+	}
+
+	/** クリーパーへの対処。このtickの行動を決めたら true。 */
+	private static boolean creeperTick(FakeMember o, ServerLevel l, State st, Creeper c, List<LivingEntity> aggr) {
+		double d = o.distanceTo(c);
+		boolean swelling = c.getSwellDir() > 0 || c.isIgnited();
+		int n = l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(16, 6, 16), Creeper::isAlive).size();
+		boolean alone = true;
+		for (LivingEntity e : aggr) {
+			if (!(e instanceof Creeper)) {
+				alone = false;
+			}
+		}
+		boolean armed = strongWeapon(o) && n == 1 && alone && o.getHealth() >= 10;
+		// 上級者はクリーパーと無理に戦わない: 離れる先がある限りは離れる。追い詰められた時だけ（下の dir == null）武器で倒す
+		Vec3 away = Motion.safeAway(o, o.position().subtract(c.position()));
+		if (armed && away == null && d < 4.0) {
+			// 逃げ場が無い: 殴って押し返しながら倒す
+			st.backingOff = false;
+			st.engage = true;
+			st.fighting = true;
+			st.target = c;
+			st.calm = 0;
+			fightTick(o, st, c);
+			return true;
+		}
+		st.engage = false;
+		if (swelling || d <= 7.0 || (c.getTarget() == o && d < 10.0)) {
+			if (!swelling && d >= 9.0) {
+				st.backingOff = false;
+				return false;
+			}
+			Vec3 dir = away;
+			if (dir == null) {
+				st.backingOff = false;
+				return false; // 下がる先が無い: 通常の判断へ
+			}
+			st.backingOff = true;
+			st.fighting = false;
+			st.calm = 0;
+			lowerShield(o, st);
+			// 向きは進む方向に任せる（creeper の方を向くと MoveControl の回頭と喧嘩して進めない）
+			o.setSprinting(true);
+			Vec3 to = o.position().add(dir.scale(6));
+			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
+			if (swelling && o.onGround() && o.tickCount % 9 == 0 && Motion.safeToJump(o)) {
+				o.getJumpControl().jump();
+			}
+			return true;
+		}
+		st.backingOff = false;
+		return false;
+	}
+
 	private static Creeper nearestCreeper(FakeMember o, ServerLevel l) {
 		Creeper best = null;
-		double bd = 7 * 7;
-		for (Creeper c : l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(7, 4, 7), Creeper::isAlive)) {
+		double bd = 16 * 16;
+		for (Creeper c : l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(16, 6, 16), Creeper::isAlive)) {
 			double d = c.distanceToSqr(o);
-			if (d < bd && (d < 3 * 3 || o.hasLineOfSight(c))) {
+			if (d < bd && (d < 7 * 7 || o.hasLineOfSight(c))) {
 				bd = d;
 				best = c;
 			}
@@ -386,7 +431,7 @@ final class Combat {
 		boolean creeperFuse = t instanceof Creeper c && (c.getSwellDir() > 0 || c.isIgnited());
 		boolean wantShield = hasShield(o)
 				&& (creeperFuse || (isRanged(t) && dist > 3.5) || (t instanceof Creeper && dist < 6));
-		if (creeperFuse && dist < 5.5) {
+		if (creeperFuse && dist < 5.5 && !st.engage) {
 			// 導火線: 離れる（盾を構えたまま後退）
 			setShield(o, st, true);
 			moveRel(o, -1.0f, 0.0f, true);
@@ -427,7 +472,7 @@ final class Combat {
 			boolean falling = !o.onGround() && o.getDeltaMovement().y < -0.05;
 			if (falling || st.cooldown < -8 || o.isInWater()) {
 				hit(o, st, t, falling);
-				if (t instanceof Creeper) {
+				if (t instanceof Creeper && !st.engage) {
 					st.backTicks = 8;
 				}
 			} else if (o.onGround()) {
