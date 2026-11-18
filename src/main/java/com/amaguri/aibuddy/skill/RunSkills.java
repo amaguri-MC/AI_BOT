@@ -70,7 +70,36 @@ public final class RunSkills {
 	 * MineSkill の対象選び（立って届く物だけにするか）と、Nav の allowDig が読む。
 	 */
 	public static void setDigAllowed(FakeMember o, boolean on) {
-		DIG.put(o, on);
+		Boolean prev = DIG.put(o, on);
+		if (prev == null || prev != on) {
+			applyToRunner(o.skills(), on);
+		}
+	}
+
+	private static java.lang.reflect.Method setAllowDig;
+	private static boolean lookedUp;
+
+	/**
+	 * Nav の掘る許可は SkillRunner.setAllowDig(boolean)（golem ブランチで追加。既定 false）。
+	 * このブランチにはまだ無いのでリフレクションで呼ぶ（無ければ何もしない）。
+	 * UNVERIFIED: 合流後は o.skills().setAllowDig(on) の直呼びに置き換える。
+	 */
+	private static void applyToRunner(SkillRunner r, boolean on) {
+		if (!lookedUp) {
+			lookedUp = true;
+			try {
+				setAllowDig = SkillRunner.class.getMethod("setAllowDig", boolean.class);
+			} catch (NoSuchMethodException e) {
+				setAllowDig = null;
+			}
+		}
+		if (setAllowDig != null) {
+			try {
+				setAllowDig.invoke(r, on);
+			} catch (ReflectiveOperationException e) {
+				// 無視（掘る許可は MineSkill 側の選び方でも守る）
+			}
+		}
 	}
 
 	/** 方針が決まっていない（自動進行を使っていない）ときは今までどおり掘ってよい。 */
