@@ -134,7 +134,6 @@ final class Plan {
 				t.add(row("bucket", c -> c.buckets() < 2 && c.n(Items.OBSIDIAN) < 10 && c.ingots() >= 3, "craft", c -> j("item", "bucket", "count", 1), 30, "バケツを作る"));
 				t.add(row("fns", c -> !hasIgniter(c) && c.has(Items.FLINT) && c.ingots() >= 1, "craft", c -> j("item", "flint_and_steel", "count", 1), 30, "火打石と打ち金"));
 				t.add(row("furnace_cobble", c -> c.n(Items.RAW_IRON) > 0 && c.ingots() < ironNeed(c) && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
-				t.add(row("furnace_cobble_dig", c -> c.n(Items.RAW_IRON) > 0 && c.ingots() < ironNeed(c) && !c.has(Items.FURNACE) && c.cobble() < 8, "dig_cobble", c -> j("count", 8 - c.cobble()), 20 * 100, "かまど用の丸石（浅く掘る）"));
 				t.add(row("smelt_iron", c -> c.n(Items.RAW_IRON) > 0 && c.ingots() < ironNeed(c), "smelt", c -> j("item", "raw_iron", "count", Math.min(c.n(Items.RAW_IRON), ironNeed(c) - c.ingots())), 20 * 60, "鉄を焼く"));
 				// 宝の地図があれば埋もれた宝（鉄・TNT）
 				t.add(once("treasure_find", "treasure_tried", c -> c.overworld() && c.has(Items.FILLED_MAP), "find_structure", c -> j("type", "buried_treasure", "radius", 50), 20 * 240, "宝の地図の場所へ"));
@@ -163,12 +162,10 @@ final class Plan {
 				t.add(once("shipwreck_wide", "shipwreck_wide_tried", c -> c.overworld() && exploredAll(c) && ironShort(c), "find_structure", c -> j("type", "shipwreck", "radius", 24), 20 * 360, "遠くの沈没船を探す"));
 				t.add(once("shipwreck_wide_loot", "shipwreck_wide_looted", c -> c.ap.flag("shipwreck_wide_tried") && near(c, "shipwreck", 24), "loot_chests", c -> j("radius", 16), 20 * 90, "沈没船のチェスト"));
 				t.add(row("furnace_cobble2", c -> c.n(Items.RAW_IRON) > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
-				t.add(row("furnace_cobble2_dig", c -> c.n(Items.RAW_IRON) > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "dig_cobble", c -> j("count", 8 - c.cobble()), 20 * 100, "かまど用の丸石（浅く掘る）"));
 			}
 			case FOOD -> {
 				t.add(row("cook_fuel", c -> c.raw() > 0 && !c.fuel(), "mine", c -> j("block", "log", "count", 2), 60 * 20, "焼く燃料"));
 				t.add(row("furnace_cobble", c -> c.raw() > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "mine", c -> j("block", "stone", "count", 8 - c.cobble()), 20 * 60, "かまど用の丸石"));
-				t.add(row("furnace_cobble_dig", c -> c.raw() > 0 && !c.has(Items.FURNACE) && c.cobble() < 8, "dig_cobble", c -> j("count", 8 - c.cobble()), 20 * 100, "かまど用の丸石（浅く掘る）"));
 				t.add(row("cook", c -> c.raw() >= 4 || c.raw() > 0 && c.cooked() + c.raw() >= 6, "smelt", c -> j("item", id(c.mostRaw()), "count", c.n(c.mostRaw())), 20 * 90, "肉を焼く"));
 				t.add(row("hunt", c -> animal(c) != null, "hunt", c -> j("target", animal(c), "count", 3), 20 * 60, "動物を狩る"));
 				t.add(row("cook_rest", c -> c.raw() > 0, "smelt", c -> j("item", id(c.mostRaw()), "count", c.n(c.mostRaw())), 20 * 90, "肉を焼く"));

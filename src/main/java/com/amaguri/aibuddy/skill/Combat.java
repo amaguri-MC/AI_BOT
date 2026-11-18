@@ -75,6 +75,10 @@ final class Combat {
 		int creeperCd;
 		int backoffTicks;
 		Vec3 backoffFrom = Vec3.ZERO;
+		/** クリーパーから下がったあと、この tick 数は（膨らんでいなければ）下がらない */
+		int backoffCd;
+		/** クリーパーごとの、下がった累計 tick（上限を超えた、膨らんでいない・見えないクリーパーは無視する） */
+		final Map<Creeper, Integer> creeperBackoff = new WeakHashMap<>();
 		int edgeTicks;
 		int edgeCd;
 	}
@@ -96,6 +100,9 @@ final class Combat {
 			State dead = STATES.get(o);
 			if (dead != null && dead.evade.active) {
 				dead.evade.abort(o); // Autopilot の止めを必ず解く
+			}
+			if (dead != null) {
+				setBackingOff(o, dead, false);
 			}
 			return;
 		}
@@ -119,13 +126,16 @@ final class Combat {
 		}
 		// クリーパーは最優先の危険。16ブロック以内に見えたら、進行中のスキルより先に距離を保つ。
 		// 7ブロック以内・膨らみ始めは走って離れる。石以上の剣/斧で単体なら、膨らむ前に近づいて倒す
-		Creeper creeper = nearestCreeper(o, l);
+		if (st.backoffCd > 0) {
+			st.backoffCd--;
+		}
+		Creeper creeper = nearestCreeper(o, l, st);
 		if (creeper != null && !o.skills().status().contains("クリーパー")) {
 			if (creeperTick(o, l, st, creeper, aggr)) {
 				return;
 			}
 		} else {
-			st.backingOff = false;
+			setBackingOff(o, st, false);
 			st.engage = false;
 		}
 		if (o.tickCount >= st.noFleeUntil && shouldFlee(o, l, aggr, purposeful, day)) {
@@ -231,7 +241,7 @@ final class Combat {
 		Vec3 away = Motion.safeAway(o, o.position().subtract(c.position()));
 		if (armed && away == null && d < 4.0) {
 			// 逃げ場が無い: 殴って押し返しながら倒す
-			st.backingOff = false;
+			setBackingOff(o, st, false);
 			st.engage = true;
 			st.fighting = true;
 			st.target = c;
@@ -242,15 +252,29 @@ final class Combat {
 		st.engage = false;
 		if (swelling || d <= 7.0 || (c.getTarget() == o && d < 10.0)) {
 			if (!swelling && d >= 9.0) {
-				st.backingOff = false;
+				setBackingOff(o, st, false);
 				return false;
+			}
+			if (!swelling && st.backoffCd > 0) {
+				return false; // 下がったばかり: 膨らむまでは作業を続ける（往復しない）
 			}
 			Vec3 dir = away;
 			if (dir == null) {
-				st.backingOff = false;
+				setBackingOff(o, st, false);
 				return false; // 下がる先が無い: 通常の判断へ
 			}
-			st.backingOff = true;
+			if (!st.backingOff) {
+				st.backoffFrom = o.position();
+				st.backoffTicks = 0;
+			}
+			st.creeperBackoff.merge(c, 1, Integer::sum);
+			if (!swelling && (++st.backoffTicks > BACKOFF_MAX_TICKS || SkillUtil.horiz(o.position(), st.backoffFrom) >= BACKOFF_MAX_DIST)) {
+				// 1回の後退は最大6ブロック・40tick。そのあと4秒は（膨らまなければ）下がらない
+				setBackingOff(o, st, false);
+				st.backoffCd = BACKOFF_COOLDOWN;
+				return false;
+			}
+			setBackingOff(o, st, true);
 			st.fighting = false;
 			st.calm = 0;
 			lowerShield(o, st);
@@ -263,16 +287,41 @@ final class Combat {
 			}
 			return true;
 		}
-		st.backingOff = false;
+		setBackingOff(o, st, false);
 		return false;
 	}
 
-	private static Creeper nearestCreeper(FakeMember o, ServerLevel l) {
+	static final int BACKOFF_MAX_TICKS = 40;
+	static final double BACKOFF_MAX_DIST = 6.0;
+	static final int BACKOFF_COOLDOWN = 80;
+	/** 同じクリーパーから下がるのは累計これまで。超えたら、膨らんでいない・見えないクリーパー（下の洞窟に居座る等）は無視 */
+	static final int BACKOFF_TOTAL_MAX = 120;
+
+	/**
+	 * 後退の始め・終わり。後退中は Autopilot の行の時間を止める（避難と同じ。クリーパーから下がるたびに行の制限時間が
+	 * 進んで、同じ行が時間切れを繰り返さない）。
+	 */
+	static void setBackingOff(FakeMember o, State st, boolean on) {
+		if (st.backingOff == on) {
+			return;
+		}
+		st.backingOff = on;
+		if (!st.evade.active) {
+			o.autopilot().holdForEvade(on);
+		}
+	}
+
+	private static Creeper nearestCreeper(FakeMember o, ServerLevel l, State st) {
 		Creeper best = null;
 		double bd = 16 * 16;
 		for (Creeper c : l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(16, 6, 16), Creeper::isAlive)) {
 			double d = c.distanceToSqr(o);
-			if (d < bd && (d < 7 * 7 || o.hasLineOfSight(c))) {
+			boolean swelling = c.getSwellDir() > 0 || c.isIgnited();
+			boolean seen = o.hasLineOfSight(c);
+			if (!swelling && !seen && st.creeperBackoff.getOrDefault(c, 0) >= BACKOFF_TOTAL_MAX) {
+				continue; // 何度も下がった、膨らんでいない・見えないクリーパーは無視して作業を続ける
+			}
+			if (d < bd && (d < 7 * 7 || seen)) {
 				bd = d;
 				best = c;
 			}

@@ -8,6 +8,7 @@ import com.amaguri.aibuddy.entity.FakeMember;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.pathfinder.Path;
@@ -80,6 +81,7 @@ final class Nav {
 	private boolean climbPillaring;
 	private BlockPos climbStand;
 	private int climbStepTicks;
+	private int climbCenterTicks;
 
 
 	/** 地形を掘って進んでよいか（SkillRunner.allowDig を読む。既定 false）。 */
@@ -887,11 +889,26 @@ final class Nav {
 			return;
 		}
 		// 前が空いている: 足の高さに1個置いて階段にする（自分の体が升に掛かっていれば、先に升の真ん中へ）
-		if (o.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f))) {
-			Vec3 c = Vec3.atBottomCenterOf(feet);
-			o.getMoveControl().setWantedPosition(c.x, c.y, c.z, Motion.speedMod(o, false, 1.0));
+		// 階段の1段は、下が固く、まわり1ブロック以内に溶岩が無い所にだけ置く（溶岩の上・縁へ足場を出さない）
+		if (!solidAt(f.below()) || lavaWithin1(SkillUtil.level(o), f)) {
+			endClimb();
 			return;
 		}
+		if (o.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f))) {
+			// 升の真ん中へ直接寄せる（すぐそばの点を MoveControl に渡すと、向きを振らない処理で入力0になり動かない）
+			Vec3 c = Vec3.atBottomCenterOf(feet);
+			Vec3 v = o.getDeltaMovement();
+			double ex = Mth.clamp((c.x - o.getX()) * 0.5, -0.15, 0.15);
+			double ez = Mth.clamp((c.z - o.getZ()) * 0.5, -0.15, 0.15);
+			o.setDeltaMovement(ex, v.y, ez);
+			if (++climbCenterTicks > 20) {
+				climbCenterTicks = 0;
+				pillar.reset();
+				climbPillaring = true; // 寄れない: その場で柱
+			}
+			return;
+		}
+		climbCenterTicks = 0;
 		SkillUtil.lookAt(o, Vec3.atCenterOf(f));
 		int pr = Motion.tryPlaceScaffold(o, f);
 		if (pr == Motion.PLACE_OK) {
@@ -903,6 +920,20 @@ final class Nav {
 			pillar.reset();
 			climbPillaring = true;
 		}
+	}
+
+	/** p のまわり1ブロック（3x3x3）に溶岩があるか。 */
+	private static boolean lavaWithin1(ServerLevel l, BlockPos p) {
+		for (int dx = -1; dx <= 1; dx++) {
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dz = -1; dz <= 1; dz++) {
+					if (l.getBlockState(p.offset(dx, dy, dz)).is(net.minecraft.world.level.block.Blocks.LAVA)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
 	}
 
 	// ---- BRIDGE ----
@@ -931,6 +962,12 @@ final class Nav {
 		if (l.getBlockState(nextFloor.above()).blocksMotion() || l.getBlockState(nextFloor.above(2)).blocksMotion()) {
 			o.setShiftKeyDown(false);
 			backToNormal(); // 壁: 次は別の手段
+			return;
+		}
+		if (l.getBlockState(nextFloor).is(net.minecraft.world.level.block.Blocks.LAVA) || Motion.hazardBelow(l, nextFloor)
+				|| lavaWithin1(l, nextFloor.above())) {
+			o.setShiftKeyDown(false);
+			backToNormal(); // 溶岩・奈落の上には橋を出さない
 			return;
 		}
 		if (!l.getBlockState(nextFloor).blocksMotion()) {

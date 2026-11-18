@@ -411,6 +411,86 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	private static final int CAVE_CREEPER_FLOOR = 112;
+	private static final int LAVA_CLIFF_FLOOR = 250;
+
+	/** 作業場所の下の閉じた洞窟に（視線の通らない）クリーパーが居座っていても、序盤の原木→作業台が進む。 */
+	@GameTest(maxTicks = 1500)
+	public void startProgressesWithHiddenCreeperInCaveBelow(GameTestHelper h) {
+		final int floor = CAVE_CREEPER_FLOOR;
+		final int stand = floor + 1;
+		buildArena(h, floor);
+		for (int x = 0; x < LEN; x++) {
+			for (int z = 0; z < WID; z++) {
+				for (int y = 1; y <= 5; y++) {
+					h.setBlock(x, floor - y, z, Blocks.STONE);
+				}
+			}
+		}
+		// 床の下2〜4段に閉じた空洞（3x3x3）。中のクリーパーはこちらを見られない
+		for (int x = 3; x <= 5; x++) {
+			for (int z = 3; z <= 5; z++) {
+				for (int y = 2; y <= 4; y++) {
+					h.setBlock(x, floor - y, z, Blocks.AIR);
+				}
+			}
+		}
+		var creeper = h.spawn(net.minecraft.world.entity.EntityTypes.CREEPER, 4.5f, (float) (floor - 4), 4.5f);
+		h.setBlock(6, stand, 2, Blocks.OAK_LOG);
+		h.setBlock(6, stand + 1, 2, Blocks.OAK_LOG);
+		h.setBlock(6, stand, 6, Blocks.OAK_LOG);
+		h.setBlock(6, stand + 1, 6, Blocks.OAK_LOG);
+		FakeMember m = summon(h, 2.5f, 4.5f, true, floor);
+		m.autopilot().setFastForwardAllowed(false);
+		m.autopilot().start();
+		h.onEachTick(() -> {
+			long now = h.getTick();
+			if (!m.isAlive()) {
+				h.fail("メンバーが死んだ（status=" + m.skills().status() + "）");
+			}
+			if (hasPlacedTable(h, stand)) {
+				h.assertTrue(creeper.isAlive(), "前提: クリーパーは洞窟にいる");
+				h.succeed();
+			} else if (now >= 1400) {
+				h.fail("クリーパーが下にいると作業台まで進まない status=" + m.skills().status() + " line=" + m.autopilot().statusLine()
+						+ " rel=" + rel(h, m));
+			}
+		});
+	}
+
+	/** 溶岩の筋の向こうの崖（高さ4）が目標でも、登るための足場を溶岩の上・縁に出さない。溶岩に落ちない。 */
+	@GameTest(maxTicks = 340)
+	public void climbDoesNotPlaceScaffoldOverLava(GameTestHelper h) {
+		final int floor = LAVA_CLIFF_FLOOR;
+		buildHall(h, floor, 20, 8);
+		for (int z = 1; z < WID - 1; z++) {
+			h.setBlock(8, floor, z, Blocks.LAVA); // 崖の手前の溶岩の筋（x=8）
+			for (int x = 9; x < 19; x++) {
+				for (int y = floor + 1; y <= floor + 4; y++) {
+					h.setBlock(x, y, z, Blocks.DIRT);
+				}
+			}
+		}
+		FakeMember m = summon(h, 5.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 16));
+		Vec3 target = h.absoluteVec(new Vec3(13.5, floor + 5, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			h.assertTrue(m.isAlive() && !m.isInLava() && !m.isOnFire(), "溶岩に落ちた rel=" + rel(h, m));
+			for (int z = 1; z < WID - 1; z++) {
+				h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(8, floor, z)).is(Blocks.LAVA), "溶岩を足場で埋めた z=" + z);
+				for (int y = floor + 1; y <= floor + 4; y++) {
+					h.assertTrue(h.getBlockState(new net.minecraft.core.BlockPos(8, y, z)).isAir(), "溶岩の上に足場を出した y=" + (y - floor) + " z=" + z);
+				}
+			}
+			if (t >= 300) {
+				h.succeed();
+			}
+		});
+	}
+
 	// ---- (6) 村が無く、露出した鉄も無いときに穴を掘り始めない ----
 
 	@GameTest(maxTicks = 700)
