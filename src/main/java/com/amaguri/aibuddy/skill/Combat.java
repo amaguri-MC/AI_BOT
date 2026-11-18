@@ -219,6 +219,9 @@ final class Combat {
 	private static boolean creeperTick(FakeMember o, ServerLevel l, State st, Creeper c, List<LivingEntity> aggr) {
 		double d = o.distanceTo(c);
 		boolean swelling = c.getSwellDir() > 0 || c.isIgnited();
+		if (o.tickCount % 10 == 0) { // DEBUGCREEP
+			System.out.println("[creepdbg] d=" + d + " swelling=" + swelling + " strong=" + strongWeapon(o) + " aggr=" + aggr.size() + " dir=" + Motion.safeAway(o, o.position().subtract(c.position())) + " pos=" + o.position() + " v=" + o.getDeltaMovement() + " fighting=" + st.fighting + " back=" + st.backingOff);
+		}
 		int n = l.getEntitiesOfClass(Creeper.class, o.getBoundingBox().inflate(16, 6, 16), Creeper::isAlive).size();
 		boolean alone = true;
 		for (LivingEntity e : aggr) {
