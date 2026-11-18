@@ -72,6 +72,7 @@ final class MineSkill extends Skill {
 	private int reachLimit = 200;
 
 	private void ban(BlockPos p) {
+		System.out.println("[minedbg] BAN " + p + " state=" + state + " reachTicks=" + reachTicks + " obst=" + obstacles); // DEBUGMINE
 		blacklist.put(p.asLong(), ticks + 20 * 60);
 	}
 
@@ -183,6 +184,11 @@ final class MineSkill extends Skill {
 	@Override
 	void tick() {
 		ticks++;
+		if (ticks % 50 == 0) { // DEBUGMINE
+			System.out.println("[minedbg] t=" + ticks + " state=" + state + " target=" + target + " reachTicks=" + reachTicks + "/" + reachLimit
+					+ " obst=" + obstacles + " bl=" + blacklist.size() + " pos=" + o.blockPosition() + " navFailed=" + nav.failed() + " goal=" + nav.goal()
+					+ " eyeDist=" + (target == null ? -1 : o.getEyePosition().distanceTo(Vec3.atCenterOf(target))) + " radius=" + radius + " roams=" + roams);
+		}
 		if (ticks > 20 * 60 * 10) {
 			finishNow("時間がかかりすぎたのでやめた");
 			return;
