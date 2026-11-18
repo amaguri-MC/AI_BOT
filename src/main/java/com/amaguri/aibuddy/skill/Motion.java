@@ -697,12 +697,17 @@ final class Motion {
 	// 使う順: 価値の低い物から（土・ネザーラック・エンドストーン → 石系 → 板材）。丸石は道具・かまど用に残したいので後回し
 	private static final Item[] SCAFFOLD = { Items.DIRT, Items.NETHERRACK, Items.END_STONE, Items.COBBLED_DEEPSLATE,
 			Items.BLACKSTONE, Items.STONE, Items.COBBLESTONE, Items.OAK_PLANKS };
-	/** 丸石はこの個数までは足場に使わず残す（石の道具・かまど用） */
-	private static final int KEEP_COBBLE = 8;
+	/** 石のツルハシと石斧を作る前は、丸石をこの個数まで足場に使わず残す */
+	private static final int KEEP_COBBLE = 6;
 
 	private static int usable(FakeMember o, Item i) {
 		int n = Inv.count(o, i);
-		return i == Items.COBBLESTONE ? Math.max(0, n - KEEP_COBBLE) : n;
+		if (i != Items.COBBLESTONE) {
+			return n;
+		}
+		boolean toolsDone = (Inv.count(o, Items.STONE_PICKAXE) > 0 || Inv.count(o, Items.IRON_PICKAXE) > 0
+				|| Inv.count(o, Items.DIAMOND_PICKAXE) > 0) && (Inv.count(o, Items.STONE_AXE) > 0 || Inv.count(o, Items.IRON_AXE) > 0);
+		return toolsDone ? n : Math.max(0, n - KEEP_COBBLE);
 	}
 
 	/** 足場にできるブロックの合計個数。 */

@@ -932,7 +932,7 @@ public class AiBuddyGameTests {
 		}
 		final int dirt = countBlock(h, Blocks.DIRT, 1, 10, floor + 1, floor + 5);
 		FakeMember m = summon(h, 3.5f, 4.5f, false, floor);
-		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 10));
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 16));
 		Vec3 target = h.absoluteVec(new Vec3(8.5, floor + 6, 4.5));
 		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
@@ -962,7 +962,7 @@ public class AiBuddyGameTests {
 		}
 		final int dirt = countBlock(h, Blocks.DIRT, 10, 18, floor + 1, floor + 4);
 		FakeMember m = summon(h, 3.5f, 4.5f, false, floor);
-		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 10));
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 16));
 		Vec3 target = h.absoluteVec(new Vec3(14.5, floor + 5, 4.5));
 		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
