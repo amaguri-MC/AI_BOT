@@ -783,6 +783,94 @@ public class AiBuddyGameTests {
 		});
 	}
 
+	// ---- (9b) 実機に近い水の渡り方: 回らない・30秒以内に着く ----
+
+	private static final int SEA_FLOOR = 152;
+	private static final int FORD_FLOOR = 74;
+	private static final int FALLEN_FLOOR = 94;
+	private static final int RIVER_FLOOR = 211;
+
+	/** goto で target へ。600tick（30秒）以内に x > arriveX の陸に着くこと、40tick の間に向きが合計 360度以上動かないこと。 */
+	private static void crossWater(GameTestHelper h, FakeMember m, String tag, Vec3 targetRel, double arriveX) {
+		Vec3 target = h.absoluteVec(targetRel);
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		var st = new Object() {
+			float lastYaw = Float.NaN;
+			final double[] turn = new double[40];
+			int landed;
+		};
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			float yaw = m.getYRot();
+			double d = Float.isNaN(st.lastYaw) ? 0 : Math.abs(net.minecraft.util.Mth.wrapDegrees(yaw - st.lastYaw));
+			st.lastYaw = yaw;
+			st.turn[(int) (t % 40)] = d;
+			double sum = 0;
+			for (double v : st.turn) {
+				sum += v;
+			}
+			if (t % 5 == 0) { // TRACE
+				var path = m.getNavigation().getPath();
+				String node = path == null || path.isDone() ? "-" : h.relativePos(path.getNextNodePos()) + "/" + path.getNodeCount();
+				Vec3 want = h.relativeVec(new Vec3(m.getMoveControl().getWantedX(), m.getMoveControl().getWantedY(), m.getMoveControl().getWantedZ()));
+				System.out.println("[" + tag + "] t=" + t + " rel=" + rel(h, m) + " yaw=" + yaw + " turn40=" + (int) sum + " pose=" + m.getPose()
+						+ " swim=" + m.isSwimming() + " inWater=" + m.isInWater() + " under=" + m.isUnderWater() + " ground=" + m.onGround()
+						+ " v=" + m.getDeltaMovement() + " node=" + node + " want=" + want + " zza=" + m.zza + " status=" + m.skills().status());
+			}
+			h.assertTrue(t < 60 || sum < 360, "水の中で回っている（40tickで " + (int) sum + "度） rel=" + rel(h, m));
+			boolean onLand = !m.isInWater() && m.onGround() && rel(h, m).x > arriveX;
+			if (onLand && ++st.landed >= 5) {
+				h.succeed();
+			} else if (t >= 600) {
+				h.fail("30秒で着かない rel=" + rel(h, m) + " status=" + m.skills().status());
+			}
+		});
+	}
+
+	/** ① 陸から深い海（深さ6・幅30）へ歩いて入り、ボートの材料なしで対岸へ泳ぐ。 */
+	@GameTest(maxTicks = 700)
+	public void swimsAcrossDeepSeaFromShore(GameTestHelper h) {
+		final int floor = SEA_FLOOR;
+		buildCanal(h, floor, 42, 4, 33, 6);
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		crossWater(h, m, "seatest", new Vec3(38.5, floor + 1, 4.5), 34.5);
+	}
+
+	/** ② 水深2の浅瀬（幅11）を横切る。 */
+	@GameTest(maxTicks = 700)
+	public void crossesTwoDeepFord(GameTestHelper h) {
+		final int floor = FORD_FLOOR;
+		buildCanal(h, floor, 22, 4, 14, 2);
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		crossWater(h, m, "fordtest", new Vec3(19.5, floor + 1, 4.5), 15.5);
+	}
+
+	/** ③ 水中（深さ4の底近く）に落ちた状態から陸へ戻る。 */
+	@GameTest(maxTicks = 700)
+	public void getsBackToLandAfterFallingIntoWater(GameTestHelper h) {
+		final int floor = FALLEN_FLOOR;
+		buildCanal(h, floor, 22, 1, 12, 4);
+		FakeMember m = h.spawn(ModEntities.FAKE_MEMBER, 5.5f, (float) (floor - 3), 4.5f);
+		m.autopilot().setEnabled(false);
+		crossWater(h, m, "fallentest", new Vec3(17.5, floor + 1, 4.5), 13.5);
+	}
+
+	/** ④ 流れのある川（深さ2、z 方向へ流れる。幅8）を横切る。 */
+	@GameTest(maxTicks = 700)
+	public void crossesFlowingRiver(GameTestHelper h) {
+		final int floor = RIVER_FLOOR;
+		buildCanal(h, floor, 22, 6, 13, 2);
+		// 水面の段は z=1 だけ水源、残りは空けて流れにする（下の段は水源のまま）
+		for (int x = 6; x <= 13; x++) {
+			for (int z = 2; z < WID - 1; z++) {
+				h.setBlock(x, floor, z, Blocks.AIR);
+			}
+		}
+		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
+		crossWater(h, m, "rivertest", new Vec3(18.5, floor + 1, 4.5), 14.5);
+	}
+
 	// ---- (10) 深さ1の浅瀬では泳がない（歩いて渡る） ----
 
 	@GameTest(maxTicks = 400)
