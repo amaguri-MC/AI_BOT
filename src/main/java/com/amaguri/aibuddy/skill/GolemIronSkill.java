@@ -125,10 +125,10 @@ final class GolemIronSkill extends Skill {
 		}
 		nav.stop();
 		Motion.face(o, golem.getEyePosition());
-		if (Combat.hit(o, cs, golem, false)) {
+		if (o.onGround() && Combat.hit(o, cs, golem, false)) {
 			// 1発殴って敵対させる（念のためこちらを狙わせる）
 			golem.setTarget(o);
-			baseY = o.getY();
+			baseY = Math.floor(o.getY() + 0.01);
 			pillar.reset();
 			setPhase(Phase.PILLAR);
 		}

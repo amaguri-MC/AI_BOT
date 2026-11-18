@@ -89,6 +89,7 @@ final class MineSkill extends Skill {
 
 	MineSkill(FakeMember o, SkillRunner r, String query, int count) {
 		super(o, r);
+		nav.setAllowDig(true); // 鉱石・要塞へ掘り進むスキルは掘ってよい
 		this.query = query == null ? "" : query.trim();
 		this.goal = Math.max(1, Math.min(64, count));
 	}
