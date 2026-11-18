@@ -818,7 +818,7 @@ public class AiBuddyGameTests {
 						+ " swim=" + m.isSwimming() + " inWater=" + m.isInWater() + " under=" + m.isUnderWater() + " ground=" + m.onGround()
 						+ " v=" + m.getDeltaMovement() + " node=" + node + " want=" + want + " zza=" + m.zza + " status=" + m.skills().status());
 			}
-			h.assertTrue(t < 60 || sum < 360, "水の中で回っている（40tickで " + (int) sum + "度） rel=" + rel(h, m));
+			h.assertTrue(t < 10 || sum < 360, "水の中で回っている（40tickで " + (int) sum + "度） rel=" + rel(h, m));
 			boolean onLand = !m.isInWater() && m.onGround() && rel(h, m).x > arriveX;
 			if (onLand && ++st.landed >= 5) {
 				h.succeed();
@@ -828,13 +828,13 @@ public class AiBuddyGameTests {
 		});
 	}
 
-	/** ① 陸から深い海（深さ6・幅30）へ歩いて入り、ボートの材料なしで対岸へ泳ぐ。 */
+	/** ① 陸から深い海（深さ6・幅44）へ歩いて入り、ボートの材料なしで対岸へ泳ぐ。 */
 	@GameTest(maxTicks = 700)
 	public void swimsAcrossDeepSeaFromShore(GameTestHelper h) {
 		final int floor = SEA_FLOOR;
-		buildCanal(h, floor, 42, 4, 33, 6);
+		buildCanal(h, floor, 56, 4, 47, 6); // 水面44ブロック（36を超えるので区間に区切って泳ぐ）
 		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
-		crossWater(h, m, "seatest", new Vec3(38.5, floor + 1, 4.5), 34.5);
+		crossWater(h, m, "seatest", new Vec3(52.5, floor + 1, 4.5), 48.5);
 	}
 
 	/** ② 水深2の浅瀬（幅11）を横切る。 */
@@ -869,6 +869,93 @@ public class AiBuddyGameTests {
 		}
 		FakeMember m = summon(h, 2.5f, 4.5f, false, floor);
 		crossWater(h, m, "rivertest", new Vec3(18.5, floor + 1, 4.5), 14.5);
+	}
+
+	// ---- (9c) 高い所へは足場ブロックで登る（掘らない） ----
+
+	private static final int SHAFT_FLOOR = 186;
+	private static final int STEP_FLOOR = 226;
+
+	private static int countBlock(GameTestHelper h, net.minecraft.world.level.block.Block b, int x0, int x1, int y0, int y1) {
+		int n = 0;
+		for (int x = x0; x <= x1; x++) {
+			for (int y = y0; y <= y1; y++) {
+				for (int z = 1; z < WID - 1; z++) {
+					if (h.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(b)) {
+						n++;
+					}
+				}
+			}
+		}
+		return n;
+	}
+
+	/** 深さ5の縦穴（1x1）の底から、地上の目標へ掘らずにブロックを積んで出る。 */
+	@GameTest(maxTicks = 500)
+	public void climbsOutOfShaftWithBlocksWithoutDigging(GameTestHelper h) {
+		final int floor = SHAFT_FLOOR;
+		buildHall(h, floor, 12, 13);
+		for (int x = 1; x <= 10; x++) {
+			for (int y = floor + 1; y <= floor + 5; y++) {
+				for (int z = 1; z < WID - 1; z++) {
+					if (!(x == 3 && z == 4)) {
+						h.setBlock(x, y, z, Blocks.DIRT);
+					}
+				}
+			}
+		}
+		final int dirt = countBlock(h, Blocks.DIRT, 1, 10, floor + 1, floor + 5);
+		FakeMember m = summon(h, 3.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 10));
+		Vec3 target = h.absoluteVec(new Vec3(8.5, floor + 6, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (t % 20 == 0) { // TRACE
+				System.out.println("[shafttest] t=" + t + " rel=" + rel(h, m) + " cobble=" + count(m, Items.COBBLESTONE) + " status=" + m.skills().status());
+			}
+			h.assertTrue(countBlock(h, Blocks.DIRT, 1, 10, floor + 1, floor + 5) == dirt, "穴の壁を掘った");
+			Vec3 p = rel(h, m);
+			if (m.onGround() && p.y >= floor + 5.9 && p.x > 6.0) {
+				h.succeed();
+			} else if (t >= 440) {
+				h.fail("縦穴から出られない rel=" + p + " status=" + m.skills().status());
+			}
+		});
+	}
+
+	/** 高さ4の崖の上の目標へ、ブロックを置いて登る（掘らない）。 */
+	@GameTest(maxTicks = 500)
+	public void climbsCliffWithPlacedBlocks(GameTestHelper h) {
+		final int floor = STEP_FLOOR;
+		buildHall(h, floor, 20, 10);
+		for (int x = 10; x < 19; x++) {
+			for (int y = floor + 1; y <= floor + 4; y++) {
+				for (int z = 1; z < WID - 1; z++) {
+					h.setBlock(x, y, z, Blocks.DIRT);
+				}
+			}
+		}
+		final int dirt = countBlock(h, Blocks.DIRT, 10, 18, floor + 1, floor + 4);
+		FakeMember m = summon(h, 3.5f, 4.5f, false, floor);
+		m.getInventory().addItem(new ItemStack(Items.COBBLESTONE, 10));
+		Vec3 target = h.absoluteVec(new Vec3(14.5, floor + 5, 4.5));
+		String r = m.skills().start("goto", json("x", target.x, "y", target.y, "z", target.z));
+		h.assertTrue(!refused(r), "goto が始まらない: " + r);
+		h.onEachTick(() -> {
+			long t = h.getTick();
+			if (t % 20 == 0) { // TRACE
+				System.out.println("[steptest] t=" + t + " rel=" + rel(h, m) + " cobble=" + count(m, Items.COBBLESTONE) + " status=" + m.skills().status());
+			}
+			h.assertTrue(countBlock(h, Blocks.DIRT, 10, 18, floor + 1, floor + 4) == dirt, "崖を掘った");
+			Vec3 p = rel(h, m);
+			if (m.onGround() && p.y >= floor + 4.9 && p.x > 10.5) {
+				h.succeed();
+			} else if (t >= 440) {
+				h.fail("崖の上へ登れない rel=" + p + " status=" + m.skills().status());
+			}
+		});
 	}
 
 	// ---- (10) 深さ1の浅瀬では泳がない（歩いて渡る） ----

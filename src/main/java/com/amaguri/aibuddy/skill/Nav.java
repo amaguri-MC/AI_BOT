@@ -20,7 +20,7 @@ import net.minecraft.world.phys.Vec3;
  * 5秒進まなければ 掘って進む → 柱 → 橋 → 回り込み の順で打開する。溶岩は避ける。
  */
 final class Nav {
-	private enum Mode { NORMAL, DETOUR, DIG, PILLAR, BRIDGE }
+	private enum Mode { NORMAL, DETOUR, DIG, PILLAR, BRIDGE, CLIMB }
 
 	/** これ以上離れていればダッシュ（ブロック） */
 	static final double DASH_DISTANCE = 3.0;
@@ -73,6 +73,13 @@ final class Nav {
 
 	// BRIDGE
 	private int bridged;
+
+	// CLIMB: 目標が高く経路が届かない時、足場ブロックで登る（掘らない）
+	private int climbCd;
+	private int climbSteps;
+	private boolean climbPillaring;
+	private BlockPos climbStand;
+	private int climbStepTicks;
 
 
 	/** 地形を掘って進んでよいか（SkillRunner.allowDig を読む。既定 false）。 */
@@ -200,6 +207,7 @@ final class Nav {
 			case DIG -> tickDig();
 			case PILLAR -> tickPillar();
 			case BRIDGE -> tickBridge();
+			case CLIMB -> tickClimb();
 		}
 	}
 
@@ -272,11 +280,26 @@ final class Nav {
 	private void swimTowards() {
 		Vec3 target;
 		Path p = o.getNavigation().getPath();
-		if (p != null && !p.isDone() && p.getNextNodeIndex() < p.getNodeCount()) {
-			Vec3 n = Vec3.atBottomCenterOf(p.getNextNodePos());
-			target = SkillUtil.horiz(n, o.position()) < 8 ? n : segmentTarget0();
-		} else {
+		target = null;
+		if (p != null && !p.isDone()) {
+			// 真上・すぐそば（水平1.2未満）の経路点は飛ばして、先の点へ向かう（真上の点では向きが定まらず回る）
+			for (int i = p.getNextNodeIndex(); i < p.getNodeCount(); i++) {
+				Vec3 n = Vec3.atBottomCenterOf(p.getNodePos(i));
+				double hd = SkillUtil.horiz(n, o.position());
+				if (hd >= 8) {
+					break;
+				}
+				if (hd >= 1.2) {
+					target = n;
+					break;
+				}
+			}
+		}
+		if (target == null) {
 			target = segmentTarget0();
+			if (SkillUtil.horiz(target, o.position()) < 1.2 && SkillUtil.horiz(goal, o.position()) >= 1.2) {
+				target = goal;
+			}
 		}
 		double surface = Motion.waterSurfaceY(SkillUtil.level(o), o);
 		// 目標が水中深く（沈没船など）で近いときだけ潜る。それ以外は水面を泳ぐ
@@ -470,6 +493,14 @@ final class Nav {
 		} else if (wantNew) {
 			issueSegment(nav, mod);
 			sinceRepath = 0;
+			if (shouldClimb()) {
+				// 目標が高く（段差2以上）経路が届かない: 詰まり（5秒）を待たずに足場ブロックで登る
+				startClimb();
+				return;
+			}
+		}
+		if (climbCd > 0) {
+			climbCd--;
 		}
 		nav.setSpeedModifier(mod);
 		if (avoidCd > 0) {
@@ -719,6 +750,141 @@ final class Nav {
 			if (goal.y - o.getY() < 1.5 || pillars >= 12 || pathExists()) {
 				backToNormal();
 			}
+		}
+	}
+
+	// ---- CLIMB ----
+
+	/** 目標が今より2段以上高く、経路が届かず、足場ブロックを持っていて地面に立っているか。 */
+	private boolean shouldClimb() {
+		if (climbCd > 0 || !o.onGround() || o.isInWater() || o.isPassenger() || Motion.scaffoldCount(o) <= 0) {
+			return false;
+		}
+		if (goal.y - o.getY() < 1.6 || SkillUtil.horiz(o.position(), goal) > 24) {
+			return false;
+		}
+		Path p = o.getNavigation().getPath();
+		if (p != null && p.canReach() && p.getEndNode() != null && p.getEndNode().y >= goal.y - 1.0) {
+			return false;
+		}
+		return !reachable(goal);
+	}
+
+	private void startClimb() {
+		mode = Mode.CLIMB;
+		modeTicks = 0;
+		climbSteps = 0;
+		climbPillaring = false;
+		climbStand = null;
+		pillar.reset();
+		o.getNavigation().stop();
+		o.setSprinting(false);
+	}
+
+	private void endClimb() {
+		climbCd = 200; // 登れなかった: しばらくは従来どおり（回り込み等）
+		backToNormal();
+	}
+
+	private boolean solidAt(BlockPos p) {
+		return SkillUtil.level(o).getBlockState(p).blocksMotion();
+	}
+
+	/**
+	 * 1段ずつ登る。真上に近い・前が2段以上の壁なら、その場で柱（跳んで足元に置く）。前に1段の段差ならそこへ上がる。
+	 * 前が空いていれば、前の足の高さに1個置いて階段にして上がる。掘らない（頭上が塞がっていたらやめる）。
+	 */
+	private void tickClimb() {
+		if (++modeTicks > 600 || climbSteps > 24) {
+			endClimb();
+			return;
+		}
+		if (o.onGround() && o.getY() >= goal.y - 0.5) {
+			backToNormal(); // 目標の高さに着いた
+			return;
+		}
+		if (climbPillaring) {
+			if (o.onGround() && solidAt(o.blockPosition().above(2))) {
+				endClimb(); // 頭上が塞がった: 柱は頭上を掘るので、ここでやめる（掘らない）
+				return;
+			}
+			int r = pillar.tick(o, digger);
+			if (r == Motion.PILLAR_STEP) {
+				climbPillaring = false;
+				climbSteps++;
+				if (pathExists()) {
+					backToNormal();
+				}
+			} else if (r == Motion.PILLAR_NO_BLOCK || r == Motion.PILLAR_BLOCKED) {
+				endClimb();
+			}
+			return;
+		}
+		if (climbStand != null) {
+			Vec3 c = Vec3.atBottomCenterOf(climbStand);
+			o.getMoveControl().setWantedPosition(c.x, c.y, c.z, Motion.speedMod(o, false, 1.0));
+			if (o.onGround() && c.y > o.getY() + 0.5) {
+				o.getJumpControl().jump();
+			}
+			if (o.onGround() && o.blockPosition().equals(climbStand)) {
+				climbStand = null;
+				climbSteps++;
+				if (pathExists()) {
+					backToNormal();
+				}
+			} else if (++climbStepTicks > 30) {
+				climbStand = null; // 上がれなかった: 次はその場で柱
+				pillar.reset();
+				climbPillaring = true;
+			}
+			return;
+		}
+		if (!o.onGround()) {
+			return;
+		}
+		if (Motion.scaffoldCount(o) <= 0) {
+			endClimb();
+			return;
+		}
+		BlockPos feet = o.blockPosition();
+		if (solidAt(feet.above(2))) {
+			endClimb(); // 頭上が塞がっている: 掘らないのでやめる
+			return;
+		}
+		Vec3 pos = o.position();
+		Direction d = SkillUtil.horizontalToward(pos, goal);
+		BlockPos f = feet.relative(d);
+		boolean f0 = solidAt(f);
+		boolean f1 = solidAt(f.above());
+		boolean f2 = solidAt(f.above(2));
+		if (SkillUtil.horiz(pos, goal) < 1.5 || f1 || f2) {
+			// 真上に近い・前が高い壁（または頭がつかえる）: その場で1段柱
+			pillar.reset();
+			climbPillaring = true;
+			return;
+		}
+		if (f0) {
+			// 前に1段の段差: そこへ上がる
+			climbStand = f.above();
+			climbStepTicks = 0;
+			return;
+		}
+		// 前が空いている: 足の高さに1個置いて階段にする（自分の体が升に掛かっていれば、先に升の真ん中へ）
+		if (o.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f))) {
+			Vec3 c = Vec3.atBottomCenterOf(feet);
+			o.getMoveControl().setWantedPosition(c.x, c.y, c.z, Motion.speedMod(o, false, 1.0));
+			return;
+		}
+		SkillUtil.lookAt(o, Vec3.atCenterOf(f));
+		int pr = Motion.tryPlaceScaffold(o, f);
+		if (pr == Motion.PLACE_OK) {
+			climbStand = f.above();
+			climbStepTicks = 0;
+		} else if (pr == Motion.PLACE_NO_ITEM) {
+			endClimb();
+		} else {
+			pillar.reset();
+			climbPillaring = true;
 		}
 	}
 

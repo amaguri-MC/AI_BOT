@@ -84,8 +84,19 @@ public final class SafeFooting {
 
 		@Override
 		public void tick() {
-			super.tick();
 			FakeMember o = this.mob;
+			// 目標点が真上・真下・すぐそば（水平0.4未満）だと、元の MoveControl は小さな dx,dz の atan2 で毎tick向きを振る
+			// （水中で次の経路点が真上の水面にある時など、その場でぐるぐる回る）。向きは変えず、前へも出さない
+			boolean nearVertical = this.operation == MoveControl.Operation.MOVE_TO
+					&& sq(this.wantedX - o.getX()) + sq(this.wantedZ - o.getZ()) < 0.4 * 0.4;
+			float yaw0 = o.getYRot();
+			super.tick();
+			if (nearVertical) {
+				o.setYRot(yaw0);
+				o.setYBodyRot(yaw0);
+				o.setZza(0.0f);
+				o.setXxa(0.0f);
+			}
 			if (exempt(o)) {
 				return;
 			}
@@ -121,6 +132,10 @@ public final class SafeFooting {
 				o.setDeltaMovement(v.x - wx * toward, v.y, v.z - wz * toward);
 			}
 		}
+	}
+
+	private static double sq(double v) {
+		return v * v;
 	}
 
 	/** 跳ぶ前の関門: 動いている向き（止まっていれば体の向き）の着地しそうな所に溶岩・火・大きな落下が無いか。 */
