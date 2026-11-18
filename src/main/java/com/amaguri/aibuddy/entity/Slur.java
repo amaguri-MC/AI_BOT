@@ -50,6 +50,32 @@ public final class Slur {
 		return sb.toString();
 	}
 
+	/**
+	 * 水たまり用: 15字以内に切り、文字の間に「…」を挟んで途切れ途切れにする。
+	 * すでに「…」で区切られていれば、そのまま（二重に崩しすぎない）。崩し(apply)はこの後に say 側でかかる。
+	 */
+	public static String fragment(String text, RandomSource r) {
+		if (text == null) {
+			return "";
+		}
+		String t = text.strip();
+		if (t.length() > 15) {
+			t = t.substring(0, 15);
+		}
+		long dots = t.chars().filter(ch -> ch == '…').count();
+		if (dots >= 2 || t.length() < 2) {
+			return t;
+		}
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < t.length(); i++) {
+			sb.append(t.charAt(i));
+			if (i < t.length() - 1 && t.charAt(i) != '…' && t.charAt(i + 1) != '…' && r.nextFloat() < 0.35f) {
+				sb.append('…');
+			}
+		}
+		return sb.toString();
+	}
+
 	private static boolean isKana(char c) {
 		return (c >= 'ぁ' && c <= 'ゖ') || (c >= 'ァ' && c <= 'ヺ') || c == 'ー';
 	}

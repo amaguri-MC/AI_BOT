@@ -133,6 +133,16 @@ public final class BrainManager {
 			- それ以外でゲームの操作はしない。
 			""";
 
+	/** 水たまり中だけ system の末尾に足す指示。 */
+	static final String PUDDLE_PROMPT = """
+
+
+			## 今は水たまり
+			- 完全に溶けて水たまりになっていて、体は動かない。話せるのは say だけ。
+			- 一言〜二言、単語を途切れさせて話す（例: 「た…こ…やき…」「う…ごけ…な…」）。全体で15字以内。
+			- 言うことが無ければ wait。ゲームの進行や計画の話はしない。
+			""";
+
 	/** v0.1 の既定文。prompt_common.txt がこれと同じままなら（ユーザーが書き換えていなければ）新しい既定文で上書きする。 */
 	private static final String OLD_DEFAULT_COMMON_PROMPT_V01 = """
 			あなたは Minecraft の世界で、他のプレイヤーと一緒に遊んでいる「{name}」というキャラクターです。上の人格設定に従って振る舞ってください。

@@ -128,7 +128,7 @@ final class Brain {
 		BrainSettings s = BrainManager.settings();
 
 		if (member.isPuddle()) {
-			puddleTick(now);
+			puddleTick(server, now, s);
 			return;
 		}
 		nextPuddleLine = -1;
@@ -165,16 +165,21 @@ final class Brain {
 		return member.level().hasNearbyAlivePlayer(member.getX(), member.getY(), member.getZ(), s.chatRadius);
 	}
 
-	private void puddleTick(int now) {
+	/** 水たまり中: 話しかけられたとき＋90秒に1回までの独り言だけ LLM を呼ぶ。出来事は無視する。 */
+	private void puddleTick(MinecraftServer server, int now, BrainSettings s) {
 		pendingEvents.clear();
-		chatPending = false;
-		if (nextPuddleLine < 0) nextPuddleLine = now + 200 + RANDOM.nextInt(400);
-		if (now < nextPuddleLine) return;
-		nextPuddleLine = now + 800 + RANDOM.nextInt(1600);
-		Persona p = persona();
-		List<String> lines = p == null ? List.of() : p.fallbackLines();
-		// say 側で溶け具合に応じた Slur がかかる
-		sayOut(lines.isEmpty() ? "……" : lines.get(RANDOM.nextInt(lines.size())));
+		if (nextPuddleLine < 0) nextPuddleLine = now + 600 + RANDOM.nextInt(600);
+		if (inFlight || now - lastThink < s.minGapSec * 20) return;
+		String trigger = null;
+		if (chatPending) trigger = "puddle_chat";
+		else if (now >= nextPuddleLine && playerNearby(s)) trigger = "puddle_idle";
+		if (trigger == null) return;
+		nextPuddleLine = now + 1800 + RANDOM.nextInt(1200);
+		think(server, now, s, trigger);
+	}
+
+	private boolean puddleMode() {
+		return member.isPuddle();
 	}
 
 	// ---------------------------------------------------------------- 思考
@@ -204,15 +209,16 @@ final class Brain {
 			return;
 		}
 
-		String userText = buildUserText(now, trigger);
+		boolean puddle = puddleMode();
+		String userText = puddle ? buildPuddleText(now, trigger) : buildUserText(now, trigger);
 		// 履歴は持たず毎回この1通だけ（トークン節約）
 		JsonArray messages = new JsonArray();
 		JsonArray content = new JsonArray();
 		content.add(textBlock(userText));
 		messages.add(message("user", content));
 
-		JsonArray tools = buildTools();
-		String system = BrainManager.systemPrompt(p);
+		JsonArray tools = puddle ? buildPuddleTools() : buildTools();
+		String system = BrainManager.systemPrompt(p) + (puddle ? BrainManager.PUDDLE_PROMPT : "");
 		JsonObject body = ClaudeClient.buildBody(s, system, tools, messages);
 
 		List<String> sentEvents = new ArrayList<>(pendingEvents);
@@ -281,6 +287,30 @@ final class Brain {
 			sb.append("\n(特に呼ばれていない。言いたいことがあれば短く独り言、無ければ wait)");
 		}
 		return sb.toString();
+	}
+
+	/** 水たまり中の入力。状況・目標は不要なので載せない（トークン節約）。 */
+	private String buildPuddleText(int now, String trigger) {
+		StringBuilder sb = new StringBuilder("完全に溶けて水たまり。体は動かない。声も途切れ途切れ\n未返信のチャット/声:");
+		boolean any = false;
+		for (Chat c : chats) {
+			if (c.sent) continue;
+			any = true;
+			sb.append("\n- (").append(c.voice ? "声" : "チャット").append(") ").append(c.name).append(": ").append(c.text);
+		}
+		if (!any) sb.append(" なし（独り言を一言か、wait）");
+		return sb.toString();
+	}
+
+	/** 水たまり中は say と wait だけ。 */
+	static JsonArray buildPuddleTools() {
+		JsonArray all = buildTools();
+		JsonArray out = new JsonArray();
+		for (JsonElement e : all) {
+			String n = str(e.getAsJsonObject(), "name");
+			if ("say".equals(n) || "wait".equals(n)) out.add(e);
+		}
+		return out;
 	}
 
 	private static String safe(java.util.function.Supplier<String> f) {
@@ -403,7 +433,7 @@ final class Brain {
 	/** サーバースレッドで tool_use を1つ実行して結果文を返す。 */
 	private String execute(String name, JsonObject input) {
 		if (member.isRemoved()) return "できない: もういない";
-		if (member.isPuddle()) return "できない: 水たまりになっている";
+		if (member.isPuddle() && !"say".equals(name) && !"wait".equals(name)) return "できない: 水たまりになっている";
 		try {
 			switch (name) {
 				case "say" -> {
@@ -446,6 +476,8 @@ final class Brain {
 
 	private void sayOut(String text) {
 		if (text.length() > SAY_HARD_LIMIT) text = text.substring(0, SAY_HARD_LIMIT);
+		// 水たまり中は15字以内に切り、「…」で区切る。崩し(Slur)は member.say が溶け具合に応じて最大でかける
+		if (member.isPuddle()) text = com.amaguri.aibuddy.entity.Slur.fragment(text, member.getRandom());
 		member.say(text);
 		myLines.addLast(text);
 		while (myLines.size() > MAX_MY_LINES) myLines.removeFirst();
