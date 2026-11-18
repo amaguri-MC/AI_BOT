@@ -810,20 +810,12 @@ public class AiBuddyGameTests {
 			for (double v : st.turn) {
 				sum += v;
 			}
-			if (t % 5 == 0) { // TRACE
-				var path = m.getNavigation().getPath();
-				String node = path == null || path.isDone() ? "-" : h.relativePos(path.getNextNodePos()) + "/" + path.getNodeCount();
-				Vec3 want = h.relativeVec(new Vec3(m.getMoveControl().getWantedX(), m.getMoveControl().getWantedY(), m.getMoveControl().getWantedZ()));
-				System.out.println("[" + tag + "] t=" + t + " rel=" + rel(h, m) + " yaw=" + yaw + " turn40=" + (int) sum + " pose=" + m.getPose()
-						+ " swim=" + m.isSwimming() + " inWater=" + m.isInWater() + " under=" + m.isUnderWater() + " ground=" + m.onGround()
-						+ " v=" + m.getDeltaMovement() + " node=" + node + " want=" + want + " zza=" + m.zza + " status=" + m.skills().status());
-			}
-			h.assertTrue(t < 10 || sum < 360, "水の中で回っている（40tickで " + (int) sum + "度） rel=" + rel(h, m));
+			h.assertTrue(t < 10 || sum < 360, tag + ": 水の中で回っている（40tickで " + (int) sum + "度） rel=" + rel(h, m));
 			boolean onLand = !m.isInWater() && m.onGround() && rel(h, m).x > arriveX;
 			if (onLand && ++st.landed >= 5) {
 				h.succeed();
 			} else if (t >= 600) {
-				h.fail("30秒で着かない rel=" + rel(h, m) + " status=" + m.skills().status());
+				h.fail(tag + ": 30秒で着かない rel=" + rel(h, m) + " status=" + m.skills().status());
 			}
 		});
 	}
@@ -912,9 +904,6 @@ public class AiBuddyGameTests {
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
 		h.onEachTick(() -> {
 			long t = h.getTick();
-			if (t % 20 == 0) { // TRACE
-				System.out.println("[shafttest] t=" + t + " rel=" + rel(h, m) + " cobble=" + count(m, Items.COBBLESTONE) + " status=" + m.skills().status());
-			}
 			h.assertTrue(countBlock(h, Blocks.DIRT, 1, 10, floor + 1, floor + 5) == dirt, "穴の壁を掘った");
 			Vec3 p = rel(h, m);
 			if (m.onGround() && p.y >= floor + 5.9 && p.x > 6.0) {
@@ -945,9 +934,6 @@ public class AiBuddyGameTests {
 		h.assertTrue(!refused(r), "goto が始まらない: " + r);
 		h.onEachTick(() -> {
 			long t = h.getTick();
-			if (t % 20 == 0) { // TRACE
-				System.out.println("[steptest] t=" + t + " rel=" + rel(h, m) + " cobble=" + count(m, Items.COBBLESTONE) + " status=" + m.skills().status());
-			}
 			h.assertTrue(countBlock(h, Blocks.DIRT, 10, 18, floor + 1, floor + 4) == dirt, "崖を掘った");
 			Vec3 p = rel(h, m);
 			if (m.onGround() && p.y >= floor + 4.9 && p.x > 10.5) {
