@@ -883,7 +883,11 @@ final class Nav {
 			return;
 		}
 		if (f0) {
-			// 前に1段の段差: そこへ上がる
+			// 前に1段の段差: そこへ上がる（段差の上やまわりに溶岩があれば上がらない）
+			if (lavaWithin1(SkillUtil.level(o), f.above())) {
+				endClimb();
+				return;
+			}
 			climbStand = f.above();
 			climbStepTicks = 0;
 			return;
