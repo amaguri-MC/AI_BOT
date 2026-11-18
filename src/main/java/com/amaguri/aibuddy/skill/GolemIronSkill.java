@@ -11,17 +11,20 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * アイアンゴーレムから鉄インゴットを集める。
- * そばまで行って足元に3段積み（ゴーレムは届かない）、柱の上から殴って敵対させて倒し、降りて鉄を拾う。
+ * ①1発当てて敵対させ ②すぐ反対へ2〜3ブロック離れ ③プレイヤー並みの速さで足元に3段積み（ゴーレムは届かない）
+ * ④寄ってきたゴーレムを柱の上から倒し（10秒来なければ降りてやり直す、最大3回） ⑤降りて鉄を拾う。
  * 村人は殴らない。この間の Combat / Evade はゴーレムを脅威にしない（Combat.isThreat）。
  */
 final class GolemIronSkill extends Skill {
 	private static final int PILLAR_HEIGHT = 3;
 
-	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, COLLECT }
+	private enum Phase { FIND, APPROACH, BACKOFF, PILLAR, FIGHT, DESCEND, COLLECT }
 
-	/** 柱を積む場所: ゴーレムとの体のすき間がこの範囲（重ならず、柱の上から手が届く） */
-	private static final double PILLAR_GAP_MIN = 1.0;
-	private static final double PILLAR_GAP_MAX = 1.8;
+	/** 殴ったあと、ゴーレムとの体のすき間がこれになるまで離れてから積む（約2〜3ブロック） */
+	private static final double BACKOFF_GAP = 3.0;
+	/** 柱の上でゴーレムが寄ってくるのを待つ最大 tick（10秒）。来なければ降りてやり直す */
+	private static final int WAIT_TICKS = 200;
+	private static final int MAX_RETRIES = 3;
 
 	private final int wanted;
 	private final Combat.State cs;
@@ -36,6 +39,7 @@ final class GolemIronSkill extends Skill {
 	private Vec3 deathPos;
 	private int golems;
 	private int occupied;
+	private int retries;
 
 	GolemIronSkill(FakeMember o, SkillRunner r, int count) {
 		super(o, r);
@@ -113,6 +117,7 @@ final class GolemIronSkill extends Skill {
 			case BACKOFF -> backOff();
 			case PILLAR -> pillarUp();
 			case FIGHT -> fight();
+			case DESCEND -> descend();
 			case COLLECT -> collect();
 		}
 	}
@@ -122,20 +127,16 @@ final class GolemIronSkill extends Skill {
 		return SkillUtil.horiz(o.position(), golem.position()) - (golem.getBbWidth() + o.getBbWidth()) / 2.0;
 	}
 
-	/**
-	 * ゴーレムのそば（すき間 PILLAR_GAP_MIN〜PILLAR_GAP_MAX）まで行き、まだ殴らずに3段積む。
-	 * 殴ってから積むと、追ってきたゴーレム（歩きと同じ速さ）に積む途中で打ち上げられる・升に重なるので、
-	 * 敵対させるのは柱の上（手が届かない高さ）から最初の1発で。
-	 */
+	/** ①ゴーレムに近づいて1発当て、敵対させる。 */
 	private void approach() {
 		if (!golem.isAlive()) {
 			setPhase(Phase.FIND);
 			return;
 		}
 		Combat.equipBest(o, cs);
-		double g = gap();
-		if (g > PILLAR_GAP_MAX) {
-			nav.go(golem.position(), PILLAR_GAP_MAX + 0.6, 1.0);
+		double d = Combat.distTo(o, golem);
+		if (d > Combat.REACH - 0.3) {
+			nav.go(golem.position(), 2.0, 1.0);
 			nav.tick();
 			if (nav.failed() || phaseTicks > 900) {
 				nav.stop();
@@ -144,12 +145,10 @@ final class GolemIronSkill extends Skill {
 			return;
 		}
 		nav.stop();
-		if (g < PILLAR_GAP_MIN) {
-			setPhase(Phase.BACKOFF); // 近すぎる（升に重なる）: 少し離れてから積む
-			return;
-		}
-		if (o.onGround()) {
-			startPillar();
+		Motion.face(o, golem.getEyePosition());
+		if (o.onGround() && Combat.hit(o, cs, golem, false)) {
+			golem.setTarget(o);
+			setPhase(Phase.BACKOFF);
 		}
 	}
 
@@ -157,27 +156,29 @@ final class GolemIronSkill extends Skill {
 		Motion.halt(o);
 		baseY = Math.floor(o.getY() + 0.01);
 		pillar.reset();
+		pillar.chainUntil = PILLAR_HEIGHT; // 着地した tick に次を跳ぶ速い積み方
 		setPhase(Phase.PILLAR);
 	}
 
-	/** ゴーレムが近すぎて足元の升に重なる時: 水平のすき間 PILLAR_GAP_MIN 以上まで少し離れてから積む。 */
+	/** ②殴ったらすぐ、ゴーレムと反対へ体のすき間 BACKOFF_GAP まで走って離れる（SafeFooting の関門を通る移動）。 */
 	private void backOff() {
 		if (!golem.isAlive()) {
 			setPhase(Phase.FIND);
 			return;
 		}
 		Vec3 dir = Motion.safeAway(o, o.position().subtract(golem.position()));
-		if (o.onGround() && (gap() >= PILLAR_GAP_MIN + 0.3 || dir == null || phaseTicks > 60)) {
+		if (o.onGround() && (gap() >= BACKOFF_GAP || dir == null || phaseTicks > 30)) {
 			startPillar();
 			return;
 		}
 		if (dir != null) {
-			Motion.face(o, golem.getEyePosition());
-			Vec3 to = o.position().add(dir.scale(3));
-			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, false, 1.0));
+			Vec3 to = o.position().add(dir.scale(4));
+			o.setSprinting(true);
+			o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, true, 1.0));
 		}
 	}
 
+	/** ③プレイヤー並みの速さで3段積む（跳びの頂点前に足元へ置き、着地した tick に次を跳ぶ）。 */
 	private void pillarUp() {
 		if (phaseTicks > 200) {
 			failWith("柱を積めなかった（鉄 " + gained() + "）");
@@ -189,15 +190,35 @@ final class GolemIronSkill extends Skill {
 		} else if (r == Motion.PILLAR_BLOCKED) {
 			failWith("頭上が塞がっていて柱を積めない（鉄 " + gained() + "）");
 		} else if (r == Motion.PILLAR_OCCUPIED) {
-			// ゴーレムが足元の升に重なっていて置けない: 地面にいれば少し離れて積み直す。柱の途中なら次の跳びで再試行
+			// ゴーレムが足元の升に重なっていて置けない: 地面にいれば離れて積み直す。柱の途中なら次の跳びで再試行
 			if (++occupied > 10) {
 				failWith("ゴーレムが重なって柱を積めない（鉄 " + gained() + "）");
 			} else if (pillar.built == 0) {
 				setPhase(Phase.BACKOFF);
 			}
 		} else if (r == Motion.PILLAR_STEP && pillar.built >= PILLAR_HEIGHT) {
+			farTicks = 0;
 			setPhase(Phase.FIGHT);
 		}
+	}
+
+	/** ゴーレムが柱に来なかった: 降りて、①からやり直す。 */
+	private void descend() {
+		if (!golem.isAlive()) {
+			setPhase(Phase.FIND);
+			return;
+		}
+		if (o.onGround() && o.getY() - baseY < 0.5) {
+			setPhase(Phase.APPROACH);
+			return;
+		}
+		if (phaseTicks > 100) {
+			failWith("柱から降りられない（鉄 " + gained() + "）");
+			return;
+		}
+		// 柱の上からゴーレムの方へ歩き出して降りる（3段の落下は無傷）
+		Vec3 to = golem.position();
+		o.getMoveControl().setWantedPosition(to.x, o.getY(), to.z, Motion.speedMod(o, false, 1.0));
 	}
 
 	private void fight() {
@@ -222,8 +243,14 @@ final class GolemIronSkill extends Skill {
 		if (d <= Combat.REACH) {
 			farTicks = 0;
 			Combat.hit(o, cs, golem, false);
-		} else if (++farTicks > 300) {
-			failWith("ゴーレムが柱に来ない（鉄 " + gained() + "）");
+		} else if (++farTicks > WAIT_TICKS) {
+			// ④柱の上で10秒待っても来ない: 降りてやり直す（最大3回）
+			if (++retries > MAX_RETRIES) {
+				failWith("ゴーレムが柱に来ない（鉄 " + gained() + "）");
+			} else {
+				setPhase(Phase.DESCEND);
+			}
+			return;
 		}
 		if (golem.getTarget() == null && d < 12) {
 			golem.setTarget(o);

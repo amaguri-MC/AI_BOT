@@ -1430,6 +1430,10 @@ public class AiBuddyGameTests {
 		var st = new Object() {
 			boolean elevated;
 			double maxY;
+			long hitAt = -1;
+			final long[] stepAt = { -1, -1, -1 };
+			int golemHits;
+			int lastHurtStamp = -1;
 		};
 		h.onEachTick(() -> {
 			long t = h.getTick();
@@ -1438,9 +1442,28 @@ public class AiBuddyGameTests {
 			if (p.y >= floor + 1 + 2.7) {
 				st.elevated = true;
 			}
+			// ①最初に殴った tick と、③各段に乗った tick
+			if (st.hitAt < 0 && g.getLastHurtByMob() == m) {
+				st.hitAt = t;
+			}
+			for (int k = 0; k < 3; k++) {
+				if (st.hitAt >= 0 && st.stepAt[k] < 0 && m.onGround() && p.y >= floor + 1 + (k + 1) - 0.05) {
+					st.stepAt[k] = t;
+				}
+			}
+			// ゴーレムの攻撃を受けた回数
+			if (m.getLastHurtByMob() == g && m.getLastHurtByMobTimestamp() != st.lastHurtStamp) {
+				st.lastHurtStamp = m.getLastHurtByMobTimestamp();
+				st.golemHits++;
+			}
 			if (!m.skills().isBusy() && t > 20) {
 				String res = m.skills().lastResult();
-				h.assertTrue(m.isAlive() && st.elevated, "柱に登っていない/死んだ maxY=" + st.maxY + " res=" + res);
+				String timing = "hit=" + st.hitAt + " steps=" + st.stepAt[0] + "," + st.stepAt[1] + "," + st.stepAt[2] + " golemHits=" + st.golemHits;
+				com.amaguri.aibuddy.AiBuddyMod.LOGGER.info("[golem-timing] {}", timing);
+				h.assertTrue(m.isAlive() && st.elevated, "柱に登っていない/死んだ maxY=" + st.maxY + " res=" + res + " " + timing);
+				h.assertTrue(st.hitAt >= 0 && st.stepAt[2] >= 0 && st.stepAt[2] - st.hitAt <= 40,
+						"殴ってから2秒以内に柱の高さ3にならない " + timing);
+				h.assertTrue(st.golemHits <= 1, "ゴーレムの攻撃を2回以上受けた " + timing);
 				h.assertTrue(!g.isAlive(), "ゴーレムが倒れていない res=" + res);
 				h.assertTrue(count(m, Items.IRON_INGOT) >= 1, "鉄を拾えていない res=" + res + " iron=" + count(m, Items.IRON_INGOT));
 				h.succeed();

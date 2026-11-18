@@ -791,6 +791,8 @@ final class Motion {
 		private int waitTicks;
 		private int fails;
 		int built;
+		/** 速い積み方: 1段乗ったら同じ tick に次の跳びを出す（built がこれ未満の間）。0 なら従来どおり次の tick に跳ぶ */
+		int chainUntil;
 
 		void reset() {
 			cell = null;
@@ -813,6 +815,12 @@ final class Motion {
 						cell = null;
 						placed = false;
 						fails = 0;
+						if (built < chainUntil && hasScaffold(o) && !l.getBlockState(o.blockPosition().above(2)).blocksMotion()) {
+							// プレイヤーの柱積みと同じく、着地した tick に次を跳ぶ（1段あたり約8〜9tick）
+							cell = o.blockPosition();
+							waitTicks = 0;
+							o.getJumpControl().jump();
+						}
 						return PILLAR_STEP;
 					}
 					// 跳べなかった（関門に止められた等）・置けなかった: 段は数えず、少し待ってから跳び直す
