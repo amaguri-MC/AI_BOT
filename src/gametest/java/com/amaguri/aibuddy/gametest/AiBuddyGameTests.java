@@ -1596,4 +1596,34 @@ public class AiBuddyGameTests {
 		h.setBlock(headRel, bed.setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
 	}
 
+
+	/** イカ/発光イカを倒すとタコ足が落ちる（10%。100体ずつ倒して、落ちた墨/タコ足を数える）。 */
+	@GameTest(maxTicks = 100)
+	public void squidDropsTakoAshi(GameTestHelper h) {
+		buildArena(h);
+		net.minecraft.server.level.ServerLevel l = h.getLevel();
+		for (int i = 0; i < 200; i++) {
+			net.minecraft.world.entity.EntityType<?> type = i % 2 == 0 ? net.minecraft.world.entity.EntityTypes.SQUID
+					: net.minecraft.world.entity.EntityTypes.GLOW_SQUID;
+			net.minecraft.world.entity.Entity e = h.spawn(type, new net.minecraft.world.phys.Vec3(4.5, 2.0, 4.5));
+			e.kill(l);
+		}
+		h.runAfterDelay(10, () -> {
+			net.minecraft.world.phys.AABB box = new net.minecraft.world.phys.AABB(h.absolutePos(new net.minecraft.core.BlockPos(0, 0, 0))).inflate(24);
+			int tako = 0;
+			int other = 0;
+			for (net.minecraft.world.entity.item.ItemEntity it : l.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, box)) {
+				if (it.getItem().is(com.amaguri.aibuddy.item.ModItems.TAKO_ASHI)) {
+					tako += it.getItem().getCount();
+				} else {
+					other += it.getItem().getCount();
+				}
+			}
+			System.out.println("[squidtest] tako=" + tako + " other=" + other);
+			h.assertTrue(other > 0, "イカを倒しても何も落ちない（ドロップ自体が出ていない） other=" + other);
+			h.assertTrue(tako >= 5 && tako <= 45, "タコ足の数が10%の範囲外 tako=" + tako + "/200");
+			h.succeed();
+		});
+	}
+
 }
