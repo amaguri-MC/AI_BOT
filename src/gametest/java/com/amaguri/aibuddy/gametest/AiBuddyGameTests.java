@@ -1602,7 +1602,7 @@ public class AiBuddyGameTests {
 	public void squidDropsTakoAshi(GameTestHelper h) {
 		buildArena(h);
 		net.minecraft.server.level.ServerLevel l = h.getLevel();
-		for (int i = 0; i < 200; i++) {
+		for (int i = 0; i < 1000; i++) {
 			net.minecraft.world.entity.EntityType<?> type = i % 2 == 0 ? net.minecraft.world.entity.EntityTypes.SQUID
 					: net.minecraft.world.entity.EntityTypes.GLOW_SQUID;
 			net.minecraft.world.entity.Entity e = h.spawn(type, new net.minecraft.world.phys.Vec3(4.5, 2.0, 4.5));
@@ -1621,7 +1621,7 @@ public class AiBuddyGameTests {
 			}
 			System.out.println("[squidtest] tako=" + tako + " other=" + other);
 			h.assertTrue(other > 0, "イカを倒しても何も落ちない（ドロップ自体が出ていない） other=" + other);
-			h.assertTrue(tako >= 5 && tako <= 45, "タコ足の数が10%の範囲外 tako=" + tako + "/200");
+			h.assertTrue(tako >= 60 && tako <= 140, "タコ足の数が10%の範囲外 tako=" + tako + "/1000");
 			h.succeed();
 		});
 	}
